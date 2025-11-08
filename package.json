@@ -1,0 +1,26 @@
+{
+  "name": "finance-system",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sistema Web de Finanças Individual e Casal",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "clean": "turbo run clean",
+    "web:dev": "cd apps/web && npm run dev",
+    "api:dev": "cd apps/api && python -m uvicorn main:app --reload"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "packageManager": "npm@10.0.0"
+}

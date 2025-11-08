@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import { 
   Plus,
   TrendingUp,
@@ -10,11 +10,13 @@ import {
   Check,
   Settings,
   Calendar,
-  DollarSign
+  DollarSign,
+  X
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
 import { formatCurrency, formatPercent } from '@/lib/utils'
 
 interface BudgetCategory {
@@ -58,6 +60,16 @@ export default function BudgetsPage() {
   const [budget, setBudget] = useState<Budget | null>(null)
   const [loading, setLoading] = useState(true)
   const [showAddModal, setShowAddModal] = useState(false)
+  const [showConfigModal, setShowConfigModal] = useState(false)
+  const [newCategory, setNewCategory] = useState({ name: '', icon: '📂', budgeted: '' })
+  const [configForm, setConfigForm] = useState({
+    name: '',
+    type: 'zero-based' as 'zero-based' | '50-30-20' | 'envelope',
+    totalBudget: '',
+    rolloverEnabled: true
+  })
+  const [editingCategory, setEditingCategory] = useState<string | null>(null)
+  const [editValue, setEditValue] = useState('')
 
   // Mock data
   useEffect(() => {
@@ -146,8 +158,83 @@ export default function BudgetsPage() {
     setTimeout(() => {
       setBudget(mockBudget)
       setLoading(false)
+      // Initialize config form with current budget data
+      setConfigForm({
+        name: mockBudget.name,
+        type: mockBudget.type,
+        totalBudget: mockBudget.totalBudget.toString(),
+        rolloverEnabled: mockBudget.rolloverEnabled
+      })
     }, 500)
   }, [])
+
+  const handleAddCategory = () => {
+    if (!budget || !newCategory.name || !newCategory.budgeted) return
+
+    const newCat: BudgetCategory = {
+      categoryId: `cat-${Date.now()}`,
+      categoryName: newCategory.name,
+      categoryIcon: newCategory.icon,
+      budgeted: parseFloat(newCategory.budgeted),
+      spent: 0,
+      remaining: parseFloat(newCategory.budgeted),
+      percentage: 0,
+      status: 'ok'
+    }
+
+    setBudget({
+      ...budget,
+      categories: [...budget.categories, newCat],
+      totalBudget: budget.totalBudget + parseFloat(newCategory.budgeted)
+    })
+
+    setNewCategory({ name: '', icon: '📂', budgeted: '' })
+    setShowAddModal(false)
+  }
+
+  const handleConfigBudget = () => {
+    if (!budget || !configForm.name || !configForm.totalBudget) return
+
+    setBudget({
+      ...budget,
+      name: configForm.name,
+      type: configForm.type,
+      totalBudget: parseFloat(configForm.totalBudget),
+      rolloverEnabled: configForm.rolloverEnabled
+    })
+
+    setShowConfigModal(false)
+  }
+
+  const handleEditCategory = (categoryId: string, newBudgeted: number) => {
+    if (!budget) return
+
+    const updatedCategories = budget.categories.map(cat => {
+      if (cat.categoryId === categoryId) {
+        const remaining = newBudgeted - cat.spent
+        const percentage = (cat.spent / newBudgeted) * 100
+        const status: 'ok' | 'warning' | 'danger' = 
+          percentage >= 100 ? 'danger' : percentage >= 90 ? 'warning' : 'ok'
+        
+        return {
+          ...cat,
+          budgeted: newBudgeted,
+          remaining,
+          percentage,
+          status
+        }
+      }
+      return cat
+    })
+
+    const totalBudget = updatedCategories.reduce((sum, cat) => sum + cat.budgeted, 0)
+
+    setBudget({
+      ...budget,
+      categories: updatedCategories,
+      totalBudget
+    })
+  }
 
   if (loading || !budget) {
     return (
@@ -164,6 +251,183 @@ export default function BudgetsPage() {
 
   return (
     <div className="space-y-6 p-6">
+      {/* Config Budget Modal */}
+      <AnimatePresence>
+        {showConfigModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+            onClick={() => setShowConfigModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="bg-background border rounded-lg p-6 max-w-md w-full"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-xl font-bold">Configurar Orçamento</h3>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowConfigModal(false)}
+                  className="h-8 w-8 p-0"
+                >
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium mb-2 block">Nome do Orçamento</label>
+                  <Input
+                    placeholder="Ex: Orçamento Dezembro 2025"
+                    value={configForm.name}
+                    onChange={(e) => setConfigForm({ ...configForm, name: e.target.value })}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium mb-2 block">Tipo de Orçamento</label>
+                  <select
+                    value={configForm.type}
+                    onChange={(e) => setConfigForm({ ...configForm, type: e.target.value as any })}
+                    className="w-full px-3 py-2 bg-background border rounded-md"
+                  >
+                    <option value="zero-based">Base Zero</option>
+                    <option value="50-30-20">Regra 50-30-20</option>
+                    <option value="envelope">Sistema de Envelopes</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium mb-2 block">Orçamento Total</label>
+                  <Input
+                    type="number"
+                    placeholder="R$ 5000.00"
+                    value={configForm.totalBudget}
+                    onChange={(e) => setConfigForm({ ...configForm, totalBudget: e.target.value })}
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="rollover"
+                    checked={configForm.rolloverEnabled}
+                    onChange={(e) => setConfigForm({ ...configForm, rolloverEnabled: e.target.checked })}
+                    className="w-4 h-4"
+                  />
+                  <label htmlFor="rollover" className="text-sm">
+                    Permitir saldo remanescente para próximo mês
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex gap-2 mt-6">
+                <Button
+                  variant="outline"
+                  onClick={() => setShowConfigModal(false)}
+                  className="flex-1"
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  onClick={handleConfigBudget}
+                  className="flex-1"
+                >
+                  Salvar
+                </Button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Add Category Modal */}
+      <AnimatePresence>
+        {showAddModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+            onClick={() => setShowAddModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="bg-background border rounded-lg p-6 max-w-md w-full"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-xl font-bold">Nova Categoria</h3>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowAddModal(false)}
+                  className="h-8 w-8 p-0"
+                >
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium mb-2 block">Nome da Categoria</label>
+                  <Input
+                    placeholder="Ex: Academia"
+                    value={newCategory.name}
+                    onChange={(e) => setNewCategory({ ...newCategory, name: e.target.value })}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium mb-2 block">Ícone (Emoji)</label>
+                  <Input
+                    placeholder="📂"
+                    value={newCategory.icon}
+                    onChange={(e) => setNewCategory({ ...newCategory, icon: e.target.value })}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium mb-2 block">Valor Orçado</label>
+                  <Input
+                    type="number"
+                    placeholder="R$ 200.00"
+                    value={newCategory.budgeted}
+                    onChange={(e) => setNewCategory({ ...newCategory, budgeted: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2 mt-6">
+                <Button
+                  variant="outline"
+                  onClick={() => setShowAddModal(false)}
+                  className="flex-1"
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  onClick={handleAddCategory}
+                  className="flex-1"
+                >
+                  Adicionar
+                </Button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
@@ -177,7 +441,11 @@ export default function BudgetsPage() {
             <Calendar className="w-4 h-4" />
             Mudar Mês
           </Button>
-          <Button variant="outline" className="gap-2">
+          <Button 
+            variant="outline" 
+            className="gap-2"
+            onClick={() => setShowConfigModal(true)}
+          >
             <Settings className="w-4 h-4" />
             Configurar
           </Button>
@@ -360,22 +628,57 @@ export default function BudgetsPage() {
                       </p>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <p className={`text-lg font-bold ${
-                      category.remaining >= 0 ? 'text-green-500' : 'text-red-500'
-                    }`}>
-                      {category.remaining >= 0 ? '+' : ''}{formatCurrency(category.remaining)}
-                    </p>
-                    <Badge 
-                      variant={
-                        category.status === 'danger' ? 'danger' :
-                        category.status === 'warning' ? 'warning' :
-                        'success'
-                      }
-                      className="mt-1"
-                    >
-                      {formatPercent(category.percentage)}
-                    </Badge>
+                  <div className="text-right flex flex-col items-end gap-2">
+                    <div>
+                      <p className={`text-lg font-bold ${
+                        category.remaining >= 0 ? 'text-green-500' : 'text-red-500'
+                      }`}>
+                        {category.remaining >= 0 ? '+' : ''}{formatCurrency(category.remaining)}
+                      </p>
+                      <Badge 
+                        variant={
+                          category.status === 'danger' ? 'danger' :
+                          category.status === 'warning' ? 'warning' :
+                          'success'
+                        }
+                        className="mt-1"
+                      >
+                        {formatPercent(category.percentage)}
+                      </Badge>
+                    </div>
+                    {editingCategory === category.categoryId ? (
+                      <div className="flex gap-1">
+                        <Input
+                          type="number"
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          className="w-24 h-8 text-sm"
+                          autoFocus
+                        />
+                        <Button
+                          size="sm"
+                          className="h-8 px-2"
+                          onClick={() => {
+                            handleEditCategory(category.categoryId, parseFloat(editValue))
+                            setEditingCategory(null)
+                          }}
+                        >
+                          <Check className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => {
+                          setEditingCategory(category.categoryId)
+                          setEditValue(category.budgeted.toString())
+                        }}
+                      >
+                        Editar Valor
+                      </Button>
+                    )}
                   </div>
                 </div>
 

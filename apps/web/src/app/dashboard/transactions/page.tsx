@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import { 
   Plus, 
   Filter, 
@@ -15,7 +15,8 @@ import {
   ArrowDownCircle,
   Trash2,
   Edit,
-  FileText
+  FileText,
+  X
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -65,6 +66,15 @@ export default function TransactionsPage() {
   const [searchTerm, setSearchTerm] = useState('')
   const [filterType, setFilterType] = useState<'all' | 'income' | 'expense' | 'transfer'>('all')
   const [showAddModal, setShowAddModal] = useState(false)
+  const [showFiltersModal, setShowFiltersModal] = useState(false)
+  
+  // Estados para filtros avançados
+  const [filterCategory, setFilterCategory] = useState<string>('all')
+  const [filterMinAmount, setFilterMinAmount] = useState('')
+  const [filterMaxAmount, setFilterMaxAmount] = useState('')
+  const [filterStartDate, setFilterStartDate] = useState('')
+  const [filterEndDate, setFilterEndDate] = useState('')
+  const [filterStatus, setFilterStatus] = useState<string>('all')
 
   // Mock data - substituir por chamada API
   useEffect(() => {
@@ -179,6 +189,36 @@ export default function TransactionsPage() {
       filtered = filtered.filter(tx => tx.type === filterType)
     }
 
+    // Filtro por categoria
+    if (filterCategory !== 'all') {
+      filtered = filtered.filter(tx => tx.categoryId === filterCategory)
+    }
+
+    // Filtro por valor mínimo
+    if (filterMinAmount) {
+      filtered = filtered.filter(tx => tx.amount >= parseFloat(filterMinAmount))
+    }
+
+    // Filtro por valor máximo
+    if (filterMaxAmount) {
+      filtered = filtered.filter(tx => tx.amount <= parseFloat(filterMaxAmount))
+    }
+
+    // Filtro por data inicial
+    if (filterStartDate) {
+      filtered = filtered.filter(tx => new Date(tx.date) >= new Date(filterStartDate))
+    }
+
+    // Filtro por data final
+    if (filterEndDate) {
+      filtered = filtered.filter(tx => new Date(tx.date) <= new Date(filterEndDate))
+    }
+
+    // Filtro por status
+    if (filterStatus !== 'all') {
+      filtered = filtered.filter(tx => tx.status === filterStatus)
+    }
+
     // Filtro por busca
     if (searchTerm) {
       filtered = filtered.filter(tx => 
@@ -189,7 +229,7 @@ export default function TransactionsPage() {
     }
 
     setFilteredTransactions(filtered)
-  }, [searchTerm, filterType, transactions])
+  }, [searchTerm, filterType, transactions, filterCategory, filterMinAmount, filterMaxAmount, filterStartDate, filterEndDate, filterStatus])
 
   const stats = {
     totalIncome: transactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0),
@@ -214,8 +254,160 @@ export default function TransactionsPage() {
     setTransactions(prev => [newTransaction, ...prev])
   }
 
+  const clearFilters = () => {
+    setFilterCategory('all')
+    setFilterMinAmount('')
+    setFilterMaxAmount('')
+    setFilterStartDate('')
+    setFilterEndDate('')
+    setFilterStatus('all')
+  }
+
+  const getUniqueCategories = () => {
+    const categories = new Set<string>()
+    transactions.forEach(tx => {
+      if (tx.categoryId) categories.add(tx.categoryId)
+    })
+    return Array.from(categories)
+  }
+
+  const getActiveFiltersCount = () => {
+    let count = 0
+    if (filterCategory !== 'all') count++
+    if (filterMinAmount) count++
+    if (filterMaxAmount) count++
+    if (filterStartDate) count++
+    if (filterEndDate) count++
+    if (filterStatus !== 'all') count++
+    return count
+  }
+
   return (
     <div className="space-y-6 p-6">
+      {/* Advanced Filters Modal */}
+      <AnimatePresence>
+        {showFiltersModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+            onClick={() => setShowFiltersModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="bg-background border rounded-lg p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-xl font-bold">Filtros Avançados</h3>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowFiltersModal(false)}
+                  className="h-8 w-8 p-0"
+                >
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+
+              <div className="space-y-4">
+                {/* Category Filter */}
+                <div>
+                  <label className="text-sm font-medium mb-2 block">Categoria</label>
+                  <select
+                    value={filterCategory}
+                    onChange={(e) => setFilterCategory(e.target.value)}
+                    className="w-full px-3 py-2 bg-background border rounded-md"
+                  >
+                    <option value="all">Todas as Categorias</option>
+                    {getUniqueCategories().map(cat => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Amount Range */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-medium mb-2 block">Valor Mínimo</label>
+                    <Input
+                      type="number"
+                      placeholder="R$ 0,00"
+                      value={filterMinAmount}
+                      onChange={(e) => setFilterMinAmount(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium mb-2 block">Valor Máximo</label>
+                    <Input
+                      type="number"
+                      placeholder="R$ 9999,99"
+                      value={filterMaxAmount}
+                      onChange={(e) => setFilterMaxAmount(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                {/* Date Range */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-medium mb-2 block">Data Inicial</label>
+                    <Input
+                      type="date"
+                      value={filterStartDate}
+                      onChange={(e) => setFilterStartDate(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium mb-2 block">Data Final</label>
+                    <Input
+                      type="date"
+                      value={filterEndDate}
+                      onChange={(e) => setFilterEndDate(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                {/* Status Filter */}
+                <div>
+                  <label className="text-sm font-medium mb-2 block">Status</label>
+                  <select
+                    value={filterStatus}
+                    onChange={(e) => setFilterStatus(e.target.value)}
+                    className="w-full px-3 py-2 bg-background border rounded-md"
+                  >
+                    <option value="all">Todos os Status</option>
+                    <option value="completed">Completado</option>
+                    <option value="pending">Pendente</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex gap-2 mt-6">
+                <Button
+                  variant="outline"
+                  onClick={clearFilters}
+                  className="flex-1"
+                >
+                  Limpar Filtros
+                </Button>
+                <Button
+                  onClick={() => setShowFiltersModal(false)}
+                  className="flex-1"
+                >
+                  Aplicar Filtros
+                </Button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
@@ -353,9 +545,19 @@ export default function TransactionsPage() {
             </div>
 
             {/* More Filters Button */}
-            <Button variant="outline" size="sm" className="gap-2">
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="gap-2 relative"
+              onClick={() => setShowFiltersModal(true)}
+            >
               <Filter className="w-4 h-4" />
               Mais Filtros
+              {getActiveFiltersCount() > 0 && (
+                <span className="absolute -top-1 -right-1 bg-primary text-primary-foreground text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                  {getActiveFiltersCount()}
+                </span>
+              )}
             </Button>
           </div>
         </CardContent>

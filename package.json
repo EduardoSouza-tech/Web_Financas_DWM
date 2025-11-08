@@ -22,5 +22,9 @@
     "node": ">=18.0.0",
     "npm": ">=9.0.0"
   },
-  "packageManager": "npm@10.0.0"
+  "packageManager": "npm@10.0.0",
+  "dependencies": {
+    "@radix-ui/react-progress": "^1.1.8",
+    "@radix-ui/react-tabs": "^1.1.13"
+  }
 }

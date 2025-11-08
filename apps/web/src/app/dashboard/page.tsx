@@ -18,33 +18,38 @@ import { formatCurrency, formatPercent } from '@/lib/utils';
 import CashflowChart from '@/components/charts/cashflow-chart';
 import CategoryChart from '@/components/charts/category-chart';
 import BudgetChart from '@/components/charts/budget-chart';
+import { useFinance } from '@/contexts/FinanceContext';
+import { 
+  MONTHLY_SUMMARY, 
+  CATEGORY_PERCENTAGES, 
+  GOALS, 
+  PREDICTIVE_ALERTS,
+  FINANCIAL_SCORE,
+  FORECAST_DATA
+} from '@/lib/mock-data';
 
 export default function DashboardPage() {
-  const [data, setData] = useState({
-    totalIncome: 15000,
-    totalExpenses: 10500,
-    balance: 4500,
-    projectedBalance: 5200,
-    savingsRate: 30,
-    score: 78,
-    mainCategories: [
-      { categoryName: 'Alimentação', amount: 3200, percentage: 30.5 },
-      { categoryName: 'Moradia', amount: 2800, percentage: 26.7 },
-      { categoryName: 'Transporte', amount: 1500, percentage: 14.3 },
-      { categoryName: 'Lazer', amount: 1200, percentage: 11.4 },
-      { categoryName: 'Outros', amount: 1800, percentage: 17.1 },
-    ],
-    goals: [
-      { name: 'Fundo de Emergência', currentAmount: 15000, targetAmount: 30000, percentage: 50 },
-      { name: 'Viagem Europa', currentAmount: 8000, targetAmount: 20000, percentage: 40 },
-    ],
-    alerts: [
-      {
-        type: 'warning',
-        title: 'Gasto com delivery aumentou',
-        message: 'Você gastou 20% a mais em delivery este mês',
-      },
-    ],
+  const { getTotalExpenses, getBalance, getSavingsRate, getTotalCardUsage } = useFinance();
+  
+  const [data] = useState({
+    totalIncome: MONTHLY_SUMMARY.totalIncome,
+    get totalExpenses() { return getTotalExpenses(); },
+    get balance() { return getBalance(); },
+    projectedBalance: FORECAST_DATA[5].saldoProjetado, // 6 meses à frente
+    get savingsRate() { return getSavingsRate(); },
+    score: FINANCIAL_SCORE.total,
+    mainCategories: CATEGORY_PERCENTAGES,
+    goals: GOALS.slice(0, 2).map(g => ({
+      name: g.name,
+      currentAmount: g.currentAmount,
+      targetAmount: g.targetAmount,
+      percentage: g.percentage,
+    })),
+    alerts: PREDICTIVE_ALERTS.slice(0, 2).map(a => ({
+      type: a.type,
+      title: a.title,
+      message: a.description,
+    })),
   });
 
   const containerVariants = {
@@ -146,7 +151,7 @@ export default function DashboardPage() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold">{data.savingsRate}%</div>
+              <div className="text-3xl font-bold">{data.savingsRate.toFixed(2)}%</div>
               <p className="text-xs text-muted-foreground mt-1">
                 {formatCurrency(data.balance)} economizado
               </p>

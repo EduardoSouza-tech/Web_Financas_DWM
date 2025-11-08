@@ -2,6 +2,7 @@
 
 import { useAuth } from '@/providers/auth-provider';
 import { useTheme } from '@/providers/theme-provider';
+import { FinanceProvider } from '@/contexts/FinanceContext';
 import { Button } from '@/components/ui/button';
 import { 
   LayoutDashboard, 
@@ -13,7 +14,10 @@ import {
   Menu,
   Moon,
   Sun,
-  LogOut
+  LogOut,
+  CreditCard,
+  Zap,
+  TrendingDown
 } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -26,6 +30,9 @@ const navigation = [
   { name: 'Transações', href: '/dashboard/transactions', icon: Receipt },
   { name: 'Orçamento', href: '/dashboard/budgets', icon: PiggyBank },
   { name: 'Metas', href: '/dashboard/goals', icon: Target },
+  { name: 'Cartões', href: '/dashboard/cards', icon: CreditCard },
+  { name: 'Assinaturas', href: '/dashboard/subscriptions', icon: Zap },
+  { name: 'Dívidas', href: '/dashboard/debts', icon: TrendingDown },
   { name: 'Previsões', href: '/dashboard/forecasts', icon: TrendingUp },
   { name: 'Configurações', href: '/dashboard/settings', icon: Settings },
 ];
@@ -204,13 +211,15 @@ export default function DashboardLayout({
 
         {/* Page content */}
         <main className="py-8 px-4 sm:px-6 lg:px-8">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3 }}
-          >
-            {children}
-          </motion.div>
+          <FinanceProvider>
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3 }}
+            >
+              {children}
+            </motion.div>
+          </FinanceProvider>
         </main>
       </div>
     </div>

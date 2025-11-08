@@ -480,3 +480,241 @@ export const PREDICTIVE_ALERTS = [
     daysAhead: Math.ceil((new Date(CREDIT_CARDS[0].nextDueDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)),
   },
 ];
+
+// ============================================
+// ANÁLISE DE SAÚDE FINANCEIRA REAL
+// ============================================
+export const FINANCIAL_HEALTH = {
+  monthlyIncome: USER_DATA.monthlyIncome,
+  monthlyExpenses: MONTHLY_SUMMARY.totalExpenses,
+  monthlyDebtPayments: DEBTS_SUMMARY.totalMonthlyPayment,
+  
+  // Cálculos
+  get availableAfterExpenses() {
+    return this.monthlyIncome - this.monthlyExpenses;
+  },
+  
+  get availableAfterDebts() {
+    return this.monthlyIncome - this.monthlyExpenses - this.monthlyDebtPayments;
+  },
+  
+  get debtCommitmentPercentage() {
+    return (this.monthlyDebtPayments / this.monthlyIncome) * 100;
+  },
+  
+  get isInDeficit() {
+    return this.availableAfterDebts < 0;
+  },
+  
+  get savingsRate() {
+    return (this.availableAfterExpenses / this.monthlyIncome) * 100;
+  },
+  
+  get realSavingsRate() {
+    return (this.availableAfterDebts / this.monthlyIncome) * 100;
+  },
+  
+  // Alertas críticos
+  get criticalAlerts() {
+    const alerts: Array<{
+      id: string;
+      type: 'danger' | 'warning' | 'info';
+      title: string;
+      message: string;
+      action: string;
+      priority: 'high' | 'medium' | 'low';
+    }> = [];
+    
+    // Alerta de déficit
+    if (this.isInDeficit) {
+      alerts.push({
+        id: 'deficit-critical',
+        type: 'danger',
+        title: 'Déficit Mensal Crítico',
+        message: `Você está gastando ${Math.abs(this.availableAfterDebts).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} a mais do que ganha ao considerar dívidas e despesas.`,
+        action: 'Reduza despesas ou quite dívidas urgentemente',
+        priority: 'high'
+      });
+    }
+    
+    // Alerta de endividamento alto
+    if (this.debtCommitmentPercentage > 30) {
+      alerts.push({
+        id: 'debt-high',
+        type: 'warning',
+        title: 'Endividamento Alto',
+        message: `${this.debtCommitmentPercentage.toFixed(1)}% da sua renda está comprometida com dívidas (recomendado: máx 30%)`,
+        action: 'Priorize a quitação das dívidas com maiores juros',
+        priority: 'high'
+      });
+    }
+    
+    // Alerta de metas inalcançáveis
+    const totalGoalsNeeded = GOALS.reduce((sum, goal) => sum + goal.monthlyNeeded, 0);
+    if (totalGoalsNeeded > this.availableAfterDebts) {
+      alerts.push({
+        id: 'goals-unreachable',
+        type: 'warning',
+        title: 'Metas Financeiras Inalcançáveis',
+        message: `Você precisa de ${totalGoalsNeeded.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}/mês para suas metas, mas tem apenas ${Math.max(0, this.availableAfterDebts).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} disponível`,
+        action: 'Ajuste as metas ou aumente a receita',
+        priority: 'medium'
+      });
+    }
+    
+    return alerts;
+  },
+  
+  // Insights inteligentes baseados na situação atual
+  get intelligentInsights() {
+    const insights: Array<{
+      id: string;
+      type: 'success' | 'warning' | 'info' | 'tip';
+      icon: string;
+      title: string;
+      message: string;
+      impact?: string;
+    }> = [];
+    
+    // Insight 1: Situação melhorando
+    if (!this.isInDeficit && this.debtCommitmentPercentage < 30) {
+      insights.push({
+        id: 'financial-health-good',
+        type: 'success',
+        icon: '✅',
+        title: 'Saúde Financeira Estável',
+        message: `Você está no verde! Conseguindo poupar ${this.realSavingsRate.toFixed(1)}% da renda mensal.`,
+        impact: 'Continue assim e você atingirá suas metas financeiras!'
+      });
+    }
+    
+    // Insight 2: Dívidas altas mas não em déficit
+    if (!this.isInDeficit && this.debtCommitmentPercentage >= 30 && this.debtCommitmentPercentage < 50) {
+      insights.push({
+        id: 'debt-manageable',
+        type: 'warning',
+        icon: '⚠️',
+        title: 'Dívidas Altas mas Controláveis',
+        message: `${this.debtCommitmentPercentage.toFixed(1)}% da renda em dívidas. Ainda está no positivo com ${this.availableAfterDebts.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}/mês.`,
+        impact: 'Foque em quitar as dívidas com maiores juros para liberar mais renda.'
+      });
+    }
+    
+    // Insight 3: Situação crítica
+    if (this.isInDeficit && this.debtCommitmentPercentage > 50) {
+      insights.push({
+        id: 'critical-situation',
+        type: 'warning',
+        icon: '🚨',
+        title: 'Situação Crítica de Endividamento',
+        message: `Mais de 50% da renda em dívidas e déficit de ${Math.abs(this.availableAfterDebts).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}/mês.`,
+        impact: 'URGENTE: Considere renegociar dívidas ou buscar renda extra.'
+      });
+    }
+    
+    // Insight 4: Potencial de economia
+    const highestExpenseCategories = Object.entries({
+      'Alimentação': 1200,
+      'Transporte': 800,
+      'Lazer': 600,
+      'Saúde': 450,
+      'Educação': 300,
+      'Moradia': 1200,
+      'Outros': 470.70
+    }).sort((a, b) => b[1] - a[1]).slice(0, 3);
+    
+    if (this.isInDeficit) {
+      const topCategory = highestExpenseCategories[0];
+      insights.push({
+        id: 'reduce-top-expense',
+        type: 'tip',
+        icon: '💡',
+        title: 'Oportunidade de Economia',
+        message: `Sua maior despesa é ${topCategory[0]} (${topCategory[1].toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}). Reduzindo 20%, economiza ${(topCategory[1] * 0.2).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}/mês.`,
+        impact: 'Pequenos ajustes nas maiores categorias geram grande impacto!'
+      });
+    }
+    
+    // Insight 5: Progresso após quitação de dívida
+    if (this.monthlyDebtPayments > 0) {
+      const activeDebts = DEBTS.filter(d => d.remainingAmount > 0);
+      if (activeDebts.length > 0) {
+        // Ordenar por juros (do maior para o menor)
+        const sortedByInterest = [...activeDebts].sort((a, b) => b.interestRate - a.interestRate);
+        const highestInterestDebt = sortedByInterest[0];
+        
+        const afterPayoff = this.availableAfterDebts + highestInterestDebt.monthlyPayment;
+        
+        insights.push({
+          id: 'debt-payoff-simulation',
+          type: 'info',
+          icon: '🎯',
+          title: 'Simulação de Quitação',
+          message: `Quitando "${highestInterestDebt.name}" (${highestInterestDebt.interestRate}% a.m.), você terá ${afterPayoff.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}/mês disponível.`,
+          impact: afterPayoff > 0 ? '✅ Você sairá do vermelho!' : `Ainda faltarão ${Math.abs(afterPayoff).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} para equilibrar.`
+        });
+      }
+    }
+    
+    // Insight 6: Sem dívidas - parabéns!
+    if (this.monthlyDebtPayments === 0 && !this.isInDeficit) {
+      insights.push({
+        id: 'debt-free',
+        type: 'success',
+        icon: '🎉',
+        title: 'Livre de Dívidas!',
+        message: `Parabéns! Você está sem dívidas e poupando ${this.realSavingsRate.toFixed(1)}% da renda.`,
+        impact: 'Agora é hora de focar em investimentos e metas de longo prazo!'
+      });
+    }
+    
+    // Insight 7: Taxa de poupança excelente
+    if (this.realSavingsRate >= 20 && !this.isInDeficit) {
+      insights.push({
+        id: 'excellent-savings',
+        type: 'success',
+        icon: '💰',
+        title: 'Taxa de Poupança Excelente',
+        message: `Você está poupando ${this.realSavingsRate.toFixed(1)}% da renda! Isso é acima da média brasileira (6%).`,
+        impact: 'Mantenha esse ritmo e você terá uma aposentadoria tranquila!'
+      });
+    }
+    
+    // Insight 8: Emergência financeira
+    const emergencyFund = GOALS.find(g => g.name.toLowerCase().includes('emergência'));
+    if (emergencyFund && emergencyFund.percentage < 50) {
+      insights.push({
+        id: 'emergency-fund-low',
+        type: 'warning',
+        icon: '🆘',
+        title: 'Fundo de Emergência Baixo',
+        message: `Seu fundo de emergência está ${emergencyFund.percentage.toFixed(1)}% completo. Recomendado: 6 meses de despesas (${(this.monthlyExpenses * 6).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}).`,
+        impact: 'Priorize construir uma reserva antes de novos investimentos.'
+      });
+    }
+    
+    return insights;
+  },
+  
+  // Simular quitação de dívida específica
+  simulateDebtPayoff(debtId: string) {
+    const debt = DEBTS.find(d => d.id === debtId);
+    if (!debt) return null;
+    
+    const newMonthlyPayment = this.monthlyDebtPayments - debt.monthlyPayment;
+    const newAvailable = this.monthlyIncome - this.monthlyExpenses - newMonthlyPayment;
+    const newSavingsRate = (newAvailable / this.monthlyIncome) * 100;
+    const newDebtCommitment = (newMonthlyPayment / this.monthlyIncome) * 100;
+    
+    return {
+      debtName: debt.name,
+      freedAmount: debt.monthlyPayment,
+      newMonthlyPayment,
+      newAvailable,
+      newSavingsRate,
+      newDebtCommitment,
+      willBePositive: newAvailable > 0,
+      improvement: newAvailable - this.availableAfterDebts
+    };
+  }
+};

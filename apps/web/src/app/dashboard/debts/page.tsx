@@ -1,13 +1,14 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, TrendingDown, DollarSign, Calendar, AlertTriangle, CheckCircle, X } from 'lucide-react';
+import { Plus, TrendingDown, DollarSign, Calendar, AlertTriangle, CheckCircle, X, Sparkles, TrendingUp, Trophy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Input } from '@/components/ui/input';
+import { FINANCIAL_HEALTH } from '@/lib/mock-data';
 
 interface Debt {
   id: string;
@@ -22,6 +23,15 @@ interface Debt {
   nextDueDate: string;
   creditor: string;
   color: string;
+}
+
+interface DebtAchievement {
+  id: string;
+  debtName: string;
+  amount: number;
+  paidAt: string;
+  monthlyPaymentFreed: number;
+  interestRate: number;
 }
 
 const mockDebts: Debt[] = [
@@ -75,6 +85,9 @@ export default function DebtsPage() {
   const [selectedDebt, setSelectedDebt] = useState<Debt | null>(null);
   const [installmentsToAdvance, setInstallmentsToAdvance] = useState(1);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showPayOffModal, setShowPayOffModal] = useState(false);
+  const [debtToPayOff, setDebtToPayOff] = useState<Debt | null>(null);
+  const [achievements, setAchievements] = useState<DebtAchievement[]>([]);
   const [debtForm, setDebtForm] = useState({
     name: '',
     type: 'loan' as 'loan' | 'financing' | 'credit' | 'other',
@@ -84,21 +97,58 @@ export default function DebtsPage() {
     creditor: ''
   });
 
+  // Carregar conquistas do localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem('debtAchievements');
+    if (saved) {
+      setAchievements(JSON.parse(saved));
+    }
+  }, []);
+
+  // Salvar conquista
+  const saveAchievement = (debt: Debt) => {
+    const achievement: DebtAchievement = {
+      id: `achievement-${Date.now()}`,
+      debtName: debt.name,
+      amount: debt.remainingAmount,
+      paidAt: new Date().toISOString(),
+      monthlyPaymentFreed: debt.monthlyPayment,
+      interestRate: debt.interestRate
+    };
+    
+    const newAchievements = [...achievements, achievement];
+    setAchievements(newAchievements);
+    localStorage.setItem('debtAchievements', JSON.stringify(newAchievements));
+  };
+
   const handlePayOffDebt = (debtId: string) => {
     const debt = debts.find(d => d.id === debtId);
     if (debt) {
-      setPaidMessage(`✅ Dívida "${debt.name}" quitada totalmente! (${debt.remainingAmount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })})`);
-      
-      // Remove a dívida após 300ms (tempo da animação)
-      setTimeout(() => {
-        setDebts(debts.filter(d => d.id !== debtId));
-      }, 300);
-
-      // Remove a mensagem após 5 segundos
-      setTimeout(() => {
-        setPaidMessage(null);
-      }, 5000);
+      setDebtToPayOff(debt);
+      setShowPayOffModal(true);
     }
+  };
+
+  const confirmPayOff = () => {
+    if (!debtToPayOff) return;
+
+    // Salvar conquista
+    saveAchievement(debtToPayOff);
+
+    setPaidMessage(`🎉 Parabéns! Dívida "${debtToPayOff.name}" quitada totalmente! Você liberou ${debtToPayOff.monthlyPayment.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}/mês!`);
+    
+    // Remove a dívida após 300ms (tempo da animação)
+    setTimeout(() => {
+      setDebts(debts.filter(d => d.id !== debtToPayOff.id));
+    }, 300);
+
+    // Remove a mensagem após 8 segundos
+    setTimeout(() => {
+      setPaidMessage(null);
+    }, 8000);
+
+    setShowPayOffModal(false);
+    setDebtToPayOff(null);
   };
 
   const handleAdvanceInstallments = () => {
@@ -618,6 +668,173 @@ export default function DebtsPage() {
           </AnimatePresence>
         </div>
       )}
+
+      {/* Modal de Confirmação de Quitação */}
+      <AnimatePresence>
+        {showPayOffModal && debtToPayOff && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm"
+            onClick={() => setShowPayOffModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-background rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden"
+            >
+              {/* Header */}
+              <div className="bg-gradient-to-r from-green-500 to-emerald-600 p-6 text-white">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-full bg-white/20 backdrop-blur flex items-center justify-center">
+                      <Sparkles className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h3 className="text-2xl font-bold">Quitar Dívida</h3>
+                      <p className="text-green-100 text-sm">Confirme a quitação total</p>
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowPayOffModal(false)}
+                    className="text-white hover:bg-white/20"
+                  >
+                    <X className="w-5 h-5" />
+                  </Button>
+                </div>
+              </div>
+
+              {/* Content */}
+              <div className="p-6 space-y-6">
+                {/* Debt Info */}
+                <div className="space-y-3">
+                  <div className="p-4 bg-muted rounded-lg">
+                    <p className="text-sm text-muted-foreground mb-1">Dívida selecionada</p>
+                    <p className="text-xl font-bold">{debtToPayOff.name}</p>
+                    <p className="text-sm text-muted-foreground mt-1">{debtToPayOff.creditor}</p>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="p-3 bg-red-50 dark:bg-red-950/20 rounded-lg border border-red-200 dark:border-red-800">
+                      <p className="text-xs text-muted-foreground mb-1">Valor a pagar</p>
+                      <p className="text-lg font-bold text-red-600">
+                        {debtToPayOff.remainingAmount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                      </p>
+                    </div>
+                    <div className="p-3 bg-orange-50 dark:bg-orange-950/20 rounded-lg border border-orange-200 dark:border-orange-800">
+                      <p className="text-xs text-muted-foreground mb-1">Juros mensais</p>
+                      <p className="text-lg font-bold text-orange-600">
+                        {debtToPayOff.interestRate}% a.m.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Simulação de Impacto */}
+                <div className="border-t pt-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <TrendingUp className="w-5 h-5 text-primary" />
+                    <h4 className="font-semibold text-lg">Impacto Financeiro</h4>
+                  </div>
+
+                  <div className="space-y-3">
+                    {/* Liberação mensal */}
+                    <div className="p-4 bg-green-50 dark:bg-green-950/20 rounded-lg border border-green-200 dark:border-green-800">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm text-muted-foreground">Você liberará por mês</p>
+                          <p className="text-2xl font-bold text-green-600">
+                            + {debtToPayOff.monthlyPayment.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                          </p>
+                        </div>
+                        <CheckCircle className="w-8 h-8 text-green-500" />
+                      </div>
+                    </div>
+
+                    {/* Novo saldo disponível */}
+                    {(() => {
+                      const simulation = FINANCIAL_HEALTH.simulateDebtPayoff(debtToPayOff.id);
+                      if (!simulation) return null;
+
+                      return (
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
+                            <span className="text-sm">Saldo atual mensal</span>
+                            <span className={`font-bold ${FINANCIAL_HEALTH.isInDeficit ? 'text-red-600' : 'text-green-600'}`}>
+                              {FINANCIAL_HEALTH.availableAfterDebts.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between p-3 bg-primary/10 rounded-lg border-2 border-primary">
+                            <span className="text-sm font-semibold">Novo saldo mensal</span>
+                            <span className={`font-bold text-lg ${simulation.willBePositive ? 'text-green-600' : 'text-orange-600'}`}>
+                              {simulation.newAvailable.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                            </span>
+                          </div>
+                          
+                          {simulation.willBePositive && FINANCIAL_HEALTH.isInDeficit && (
+                            <div className="p-3 bg-green-100 dark:bg-green-900/30 rounded-lg border border-green-300 dark:border-green-700">
+                              <p className="text-sm font-semibold text-green-700 dark:text-green-300 flex items-center gap-2">
+                                <Sparkles className="w-4 h-4" />
+                                Você sairá do vermelho! 🎉
+                              </p>
+                            </div>
+                          )}
+
+                          {!simulation.willBePositive && (
+                            <div className="p-3 bg-orange-100 dark:bg-orange-900/30 rounded-lg border border-orange-300 dark:border-orange-700">
+                              <p className="text-xs text-orange-700 dark:text-orange-300">
+                                Ainda faltarão {Math.abs(simulation.newAvailable).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} para equilibrar
+                              </p>
+                            </div>
+                          )}
+
+                          <div className="grid grid-cols-2 gap-2 text-xs">
+                            <div className="p-2 bg-muted rounded">
+                              <p className="text-muted-foreground">Comprometimento</p>
+                              <p className="font-semibold">
+                                {FINANCIAL_HEALTH.debtCommitmentPercentage.toFixed(1)}% → {simulation.newDebtCommitment.toFixed(1)}%
+                              </p>
+                            </div>
+                            <div className="p-2 bg-muted rounded">
+                              <p className="text-muted-foreground">Taxa de poupança</p>
+                              <p className="font-semibold">
+                                {FINANCIAL_HEALTH.realSavingsRate.toFixed(1)}% → {simulation.newSavingsRate.toFixed(1)}%
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+
+                {/* Actions */}
+                <div className="flex gap-3 pt-4 border-t">
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowPayOffModal(false)}
+                    className="flex-1"
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    onClick={confirmPayOff}
+                    className="flex-1 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700"
+                  >
+                    <CheckCircle className="w-4 h-4 mr-2" />
+                    Confirmar Quitação
+                  </Button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -1,17 +1,22 @@
 'use client';
 
 import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
-import { CREDIT_CARDS, CURRENT_MONTH_TRANSACTIONS, MONTHLY_SUMMARY } from '@/lib/mock-data';
+import { CREDIT_CARDS, CURRENT_MONTH_TRANSACTIONS, MONTHLY_SUMMARY, DEBTS } from '@/lib/mock-data';
 
 interface FinanceContextType {
   cards: any[];
   setCards: (cards: any[]) => void;
   transactions: any[];
   setTransactions: (transactions: any[]) => void;
+  debts: any[];
+  setDebts: (debts: any[]) => void;
   getTotalCardUsage: () => number;
   getTotalExpenses: () => number;
   getBalance: () => number;
   getSavingsRate: () => number;
+  getTotalDebtPayments: () => number;
+  getRealBalance: () => number;
+  getRealSavingsRate: () => number;
 }
 
 const FinanceContext = createContext<FinanceContextType | undefined>(undefined);
@@ -19,6 +24,7 @@ const FinanceContext = createContext<FinanceContextType | undefined>(undefined);
 export function FinanceProvider({ children }: { children: ReactNode }) {
   const [cards, setCards] = useState(CREDIT_CARDS);
   const [transactions, setTransactions] = useState(CURRENT_MONTH_TRANSACTIONS);
+  const [debts, setDebts] = useState(DEBTS);
 
   // Recalculate totals whenever cards or transactions change
   const getTotalCardUsage = () => {
@@ -46,6 +52,23 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       .reduce((sum, tx) => sum + tx.amount, 0);
     const balance = getBalance();
     return totalIncome > 0 ? (balance / totalIncome) * 100 : 0;
+  };
+
+  // Debt-related calculations
+  const getTotalDebtPayments = () => {
+    return debts.reduce((sum, debt) => sum + debt.monthlyPayment, 0);
+  };
+
+  const getRealBalance = () => {
+    return getBalance() - getTotalDebtPayments();
+  };
+
+  const getRealSavingsRate = () => {
+    const totalIncome = transactions
+      .filter(tx => tx.type === 'income')
+      .reduce((sum, tx) => sum + tx.amount, 0);
+    const realBalance = getRealBalance();
+    return totalIncome > 0 ? (realBalance / totalIncome) * 100 : 0;
   };
 
   // Update card usage when transactions change
@@ -76,10 +99,15 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     setCards,
     transactions,
     setTransactions,
+    debts,
+    setDebts,
     getTotalCardUsage,
     getTotalExpenses,
     getBalance,
-    getSavingsRate
+    getSavingsRate,
+    getTotalDebtPayments,
+    getRealBalance,
+    getRealSavingsRate
   };
 
   return (

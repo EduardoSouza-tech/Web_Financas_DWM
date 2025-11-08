@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Input } from '@/components/ui/input';
 import { FINANCIAL_HEALTH } from '@/lib/mock-data';
+import { useFinance } from '@/contexts/FinanceContext';
 
 interface Debt {
   id: string;
@@ -80,7 +81,7 @@ const mockDebts: Debt[] = [
 ];
 
 export default function DebtsPage() {
-  const [debts, setDebts] = useState<Debt[]>(mockDebts);
+  const { debts, setDebts } = useFinance();
   const [paidMessage, setPaidMessage] = useState<string | null>(null);
   const [selectedDebt, setSelectedDebt] = useState<Debt | null>(null);
   const [installmentsToAdvance, setInstallmentsToAdvance] = useState(1);

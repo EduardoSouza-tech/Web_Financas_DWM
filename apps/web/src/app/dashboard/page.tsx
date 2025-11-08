@@ -42,7 +42,7 @@ import {
 } from '@/lib/mock-data';
 
 export default function DashboardPage() {
-  const { getTotalExpenses, getBalance, getSavingsRate, getTotalCardUsage } = useFinance();
+  const { getTotalExpenses, getBalance, getSavingsRate, getTotalCardUsage, getTotalDebtPayments, getRealBalance, getRealSavingsRate, debts } = useFinance();
   const [achievements, setAchievements] = useState<any[]>([]);
   const [incomeBoost, setIncomeBoost] = useState(0);
   const [expenseReduction, setExpenseReduction] = useState(0);
@@ -186,12 +186,12 @@ export default function DashboardPage() {
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold text-orange-600">
-                {formatCurrency(FINANCIAL_HEALTH.monthlyDebtPayments)}
+                {formatCurrency(getTotalDebtPayments())}
               </div>
               <p className="text-xs text-orange-600 font-semibold mt-1">
-                {FINANCIAL_HEALTH.debtCommitmentPercentage.toFixed(1)}% da renda comprometida
+                {((getTotalDebtPayments() / data.totalIncome) * 100).toFixed(1)}% da renda comprometida
               </p>
-              {FINANCIAL_HEALTH.debtCommitmentPercentage > 30 && (
+              {((getTotalDebtPayments() / data.totalIncome) * 100) > 30 && (
                 <Badge variant="danger" className="mt-2 text-xs">Acima do recomendado (30%)</Badge>
               )}
             </CardContent>
@@ -199,11 +199,11 @@ export default function DashboardPage() {
         </motion.div>
 
         <motion.div variants={itemVariants}>
-          <Card className={`glass transition-all ${FINANCIAL_HEALTH.isInDeficit ? 'border-red-500/40' : 'border-primary/20 hover:border-primary/40'}`}>
+          <Card className={`glass transition-all ${getRealBalance() < 0 ? 'border-red-500/40' : 'border-primary/20 hover:border-primary/40'}`}>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">Saldo Real Mensal</CardTitle>
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${FINANCIAL_HEALTH.isInDeficit ? 'bg-red-500/10' : 'bg-primary/10'}`}>
-                {FINANCIAL_HEALTH.isInDeficit ? (
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${getRealBalance() < 0 ? 'bg-red-500/10' : 'bg-primary/10'}`}>
+                {getRealBalance() < 0 ? (
                   <XCircle className="h-5 w-5 text-red-500" />
                 ) : (
                   <CheckCircle2 className="h-5 w-5 text-primary" />
@@ -211,23 +211,23 @@ export default function DashboardPage() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className={`text-3xl font-bold ${FINANCIAL_HEALTH.isInDeficit ? 'text-red-600' : 'text-green-600'}`}>
-                {formatCurrency(FINANCIAL_HEALTH.availableAfterDebts)}
+              <div className={`text-3xl font-bold ${getRealBalance() < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                {formatCurrency(getRealBalance())}
               </div>
-              <p className={`text-xs font-semibold mt-1 flex items-center gap-1 ${FINANCIAL_HEALTH.isInDeficit ? 'text-red-600' : 'text-muted-foreground'}`}>
-                {FINANCIAL_HEALTH.isInDeficit ? (
+              <p className={`text-xs font-semibold mt-1 flex items-center gap-1 ${getRealBalance() < 0 ? 'text-red-600' : 'text-muted-foreground'}`}>
+                {getRealBalance() < 0 ? (
                   <>
                     <ArrowDownRight className="h-3 w-3" />
-                    Déficit de {FINANCIAL_HEALTH.realSavingsRate.toFixed(2)}%
+                    Déficit de {getRealSavingsRate().toFixed(2)}%
                   </>
                 ) : (
                   <>
                     <ArrowUpRight className="h-3 w-3" />
-                    Taxa: {FINANCIAL_HEALTH.realSavingsRate.toFixed(2)}%
+                    Taxa: {getRealSavingsRate().toFixed(2)}%
                   </>
                 )}
               </p>
-              {FINANCIAL_HEALTH.isInDeficit && (
+              {getRealBalance() < 0 && (
                 <Badge variant="danger" className="mt-2 text-xs">
                   Gastando mais que ganha!
                 </Badge>
@@ -477,7 +477,7 @@ export default function DashboardPage() {
               const today = new Date();
               const next7Days = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
               
-              const upcomingDebts = DEBTS.filter(d => {
+              const upcomingDebts = debts.filter(d => {
                 const dueDate = new Date(d.nextDueDate);
                 return dueDate >= today && dueDate <= next7Days;
               });

@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react';
 import { useFinance } from '@/contexts/FinanceContext';
 import { useUserProfile } from '@/hooks/useUserProfile';
 import { useAuth } from '@/providers/auth-provider';
+import { useProfiles } from '@/providers/profile-provider';
+import { formatCurrency } from '@/lib/utils';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -31,6 +33,22 @@ export default function SettingsPage() {
   const { profile, loading: profileLoading, updateProfile } = useUserProfile();
   const { categories, addCategory, updateCategory, deleteCategory, countTransactionsInCategory } = useFinance();
   const [profileError, setProfileError] = useState<string | null>(null);
+  const { activeProfile, isFamilyView, profiles, updateProfile: updateFamilyProfile } = useProfiles();
+  const { expectedIncome } = useFinance();
+  const [incomeInput, setIncomeInput] = useState('');
+  const [incomeSaved, setIncomeSaved] = useState(false);
+
+  useEffect(() => {
+    setIncomeInput(activeProfile?.expected_income ? String(activeProfile.expected_income) : '');
+  }, [activeProfile?.id, activeProfile?.expected_income]);
+
+  const handleSaveIncome = async () => {
+    if (!activeProfile) return;
+    const value = parseFloat(incomeInput);
+    const saved = await updateFamilyProfile(activeProfile.id, { expected_income: value > 0 ? value : null });
+    setIncomeSaved(!!saved);
+    if (saved) setTimeout(() => setIncomeSaved(false), 2500);
+  };
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system');
   
   // Estado do perfil (sincronizado com Supabase)
@@ -184,17 +202,39 @@ export default function SettingsPage() {
                     title="Email não pode ser alterado"
                   />
                 </div>
-                <div>
-                  <label className="text-sm font-medium text-muted-foreground">Renda Mensal</label>
-                  <Input
-                    type="number"
-                    value={profileData.monthly_income}
-                    onChange={(e) => setProfileData({ ...profileData, monthly_income: Number(e.target.value) })}
-                    disabled={!editingProfile}
-                    className="mt-1"
-                    placeholder="R$ 0,00"
-                  />
-                </div>
+              </div>
+              <div className="rounded-lg border p-4 space-y-2">
+                <label className="text-sm font-medium">
+                  Renda mensal esperada {isFamilyView ? 'da família' : `de ${activeProfile?.name ?? 'perfil'}`}
+                </label>
+                <p className="text-xs text-muted-foreground">
+                  Usada nas Previsões e para avisar quando a receita lançada no mês ficar abaixo do esperado.
+                </p>
+                {isFamilyView ? (
+                  <p className="text-sm">
+                    <strong>{formatCurrency(expectedIncome)}</strong>{' '}
+                    <span className="text-muted-foreground">
+                      (soma dos {profiles.length} perfis; para alterar, entre em cada perfil)
+                    </span>
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Input
+                      type="number"
+                      min="0"
+                      step="100"
+                      value={incomeInput}
+                      onChange={(e) => setIncomeInput(e.target.value)}
+                      className="w-48"
+                      placeholder="R$ 0,00"
+                    />
+                    <Button variant="outline" onClick={handleSaveIncome} className="gap-2">
+                      <Save className="w-4 h-4" />
+                      Salvar renda
+                    </Button>
+                    {incomeSaved && <span className="text-sm text-green-600">Salvo</span>}
+                  </div>
+                )}
               </div>
               {editingProfile && (
                 <div className="flex gap-2 justify-end pt-4">

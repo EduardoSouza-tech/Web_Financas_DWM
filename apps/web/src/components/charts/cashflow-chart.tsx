@@ -59,10 +59,11 @@ export default function CashflowChart({ data = defaultData }: CashflowChartProps
   const [hoveredLine, setHoveredLine] = useState<string | null>(null);
 
   // Calculate stats
-  const avgIncome = data.reduce((sum, item) => sum + item.income, 0) / data.length;
-  const avgExpenses = data.reduce((sum, item) => sum + item.expenses, 0) / data.length;
+  const count = Math.max(1, data.length);
+  const avgIncome = data.reduce((sum, item) => sum + item.income, 0) / count;
+  const avgExpenses = data.reduce((sum, item) => sum + item.expenses, 0) / count;
   const avgBalance = avgIncome - avgExpenses;
-  const trend = data[data.length - 1].balance - data[0].balance;
+  const trend = data.length > 1 ? data[data.length - 1].balance - data[0].balance : 0;
 
   return (
     <Card className="p-6 hover:shadow-lg transition-shadow duration-300">
@@ -84,7 +85,7 @@ export default function CashflowChart({ data = defaultData }: CashflowChartProps
             </span>
           </div>
         </div>
-        <p className="text-sm text-muted-foreground">Receitas, despesas e saldo dos últimos 12 meses</p>
+        <p className="text-sm text-muted-foreground">Receitas, despesas e saldo (despesas sem as parcelas de dívidas)</p>
         
         {/* Stats mini cards */}
         <div className="grid grid-cols-3 gap-3 mt-4">
@@ -94,7 +95,7 @@ export default function CashflowChart({ data = defaultData }: CashflowChartProps
           >
             <p className="text-xs text-green-600 dark:text-green-400 font-medium mb-1">Receita Média</p>
             <p className="text-sm font-bold text-green-700 dark:text-green-300">
-              R$ {avgIncome.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}
+              R$ {avgIncome.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}
             </p>
           </motion.div>
           <motion.div 
@@ -103,7 +104,7 @@ export default function CashflowChart({ data = defaultData }: CashflowChartProps
           >
             <p className="text-xs text-red-600 dark:text-red-400 font-medium mb-1">Despesa Média</p>
             <p className="text-sm font-bold text-red-700 dark:text-red-300">
-              R$ {avgExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}
+              R$ {avgExpenses.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}
             </p>
           </motion.div>
           <motion.div 
@@ -112,7 +113,7 @@ export default function CashflowChart({ data = defaultData }: CashflowChartProps
           >
             <p className="text-xs text-blue-600 dark:text-blue-400 font-medium mb-1">Saldo Médio</p>
             <p className="text-sm font-bold text-blue-700 dark:text-blue-300">
-              R$ {avgBalance.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}
+              R$ {avgBalance.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}
             </p>
           </motion.div>
         </div>

@@ -29,22 +29,32 @@ import CategoryChart from '@/components/charts/category-chart';
 import BudgetChart from '@/components/charts/budget-chart';
 import { useFinance } from '@/contexts/FinanceContext';
 import { MonthPicker } from '@/components/month-picker';
-import { 
-  MONTHLY_SUMMARY, 
-  CATEGORY_PERCENTAGES, 
-  GOALS, 
-  PREDICTIVE_ALERTS,
-  FINANCIAL_SCORE,
-  FORECAST_DATA,
-  SUBSCRIPTIONS,
-} from '@/lib/mock-data';
 import { computeHealth, generateInsights } from '@/lib/finance/health';
+import { generateAlerts } from '@/lib/finance/alerts';
+import { addMonths, currentMonthKey, formatMonth } from '@/lib/finance/credit-card';
+import { goalCurrentAmount, goalMonthlyNeeded, goalPercentage, nextSubscriptionCharge, todayISO } from '@/lib/finance/engine';
 import { clearAchievements, loadAchievements, type DebtAchievement } from '@/lib/finance/achievements';
 import { useProfiles } from '@/providers/profile-provider';
 import { Button } from '@/components/ui/button';
 
 export default function DashboardPage() {
-  const { getTotalExpenses, getTotalIncome, getBalance, getSavingsRate, getTotalDebtPayments, getExpensesByCategory, debts, cards, referenceMonth, setReferenceMonth } = useFinance();
+  const {
+    getTotalExpenses,
+    getTotalIncome,
+    getTotalDebtPayments,
+    getExpensesByCategory,
+    getMonthSummary,
+    getBudgets,
+    getScore,
+    expectedIncome,
+    categories,
+    debts,
+    cards,
+    goals,
+    subscriptions,
+    referenceMonth,
+    setReferenceMonth,
+  } = useFinance();
   const { activeProfileId, isFamilyView } = useProfiles();
   const [achievements, setAchievements] = useState<DebtAchievement[]>([]);
   const [incomeBoost, setIncomeBoost] = useState(0);
@@ -60,26 +70,47 @@ export default function DashboardPage() {
   const health = computeHealth(monthlyIncome, monthlyExpenses, monthlyDebtPayments);
   const { availableAfterExpenses, availableAfterDebts, debtCommitmentPercentage, isInDeficit, realSavingsRate } = health;
   
-  const [data] = useState({
-    get totalIncome() { return monthlyIncome; },
-    get totalExpenses() { return getTotalExpenses(); },
-    get balance() { return getBalance(); },
-    projectedBalance: FORECAST_DATA[5].saldoProjetado, // 6 meses à frente
-    get savingsRate() { return getSavingsRate(); },
-    score: FINANCIAL_SCORE.total,
-    mainCategories: CATEGORY_PERCENTAGES,
-    goals: GOALS.slice(0, 2).map(g => ({
-      name: g.name,
-      currentAmount: g.currentAmount,
-      targetAmount: g.targetAmount,
-      percentage: g.percentage,
-    })),
-    alerts: PREDICTIVE_ALERTS.slice(0, 2).map(a => ({
-      type: a.type,
-      title: a.title,
-      message: a.description,
-    })),
+  const summary = getMonthSummary(referenceMonth);
+  const previousIncome = getMonthSummary(addMonths(referenceMonth, -1)).income;
+  const incomeChange = previousIncome > 0 ? ((monthlyIncome - previousIncome) / previousIncome) * 100 : null;
+  const goalContributions = summary.goalContributions;
+  const freeToSpend = availableAfterDebts - goalContributions;
+  const score = getScore();
+  const budgets = getBudgets();
+  const monthAlerts = generateAlerts({
+    health,
+    expectedIncome,
+    budgets,
+    goals,
+    cards,
+    isCurrentMonth: referenceMonth === currentMonthKey(),
   });
+
+  // Gráficos com dados reais
+  const cashflowData = Array.from({ length: 6 }, (_, i) => {
+    const month = addMonths(referenceMonth, i - 5);
+    const s = getMonthSummary(month);
+    return { month: formatMonth(month, true), income: s.income, expenses: s.expenses, balance: s.income - s.expenses };
+  });
+  const CHART_COLORS = ['#3b82f6', '#8b5cf6', '#ec4899', '#10b981', '#f59e0b', '#06b6d4', '#ef4444', '#6b7280'];
+  const categoryEntries = Object.entries(summary.byCategory).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+  const categoryChartData = categoryEntries.map(([name, value], i) => ({ name, value, color: CHART_COLORS[i % CHART_COLORS.length] }));
+  const budgetChartData = budgets.map(b => ({
+    category: b.category.name,
+    spent: b.spent,
+    budget: b.limit,
+    percentage: Math.round((b.spent / b.limit) * 100),
+  }));
+  const topCategories = categoryEntries.slice(0, 5).map(([name, amount]) => ({
+    name,
+    icon: categories.find(c => c.name === name)?.icon ?? '📁',
+    amount,
+    percentage: monthlyExpenses > 0 ? (amount / monthlyExpenses) * 100 : 0,
+  }));
+  const goalsInProgress = goals
+    .filter(g => g.status === 'active')
+    .sort((a, b) => goalPercentage(b) - goalPercentage(a))
+    .slice(0, 3);
 
   // Conquistas (dívidas quitadas) do perfil ativo; na visão Família, de todos
   const isVisibleAchievement = (a: DebtAchievement) => isFamilyView || a.profile_id === activeProfileId;
@@ -110,8 +141,9 @@ export default function DashboardPage() {
   const upcomingCards = cards
     .filter(c => c.nextInvoice > 0 && inNext7Days(c.nextDueDate))
     .sort((a, b) => byDate(a.nextDueDate, b.nextDueDate));
-  const upcomingSubscriptions = SUBSCRIPTIONS
-    .filter(s => s.status === 'active' && inNext7Days(s.nextPayment))
+  const upcomingSubscriptions = subscriptions
+    .map(s => ({ ...s, nextPayment: nextSubscriptionCharge(s, todayISO()) ?? '' }))
+    .filter(s => inNext7Days(s.nextPayment))
     .sort((a, b) => byDate(a.nextPayment, b.nextPayment));
 
   // Gerar alertas críticos dinâmicos
@@ -149,8 +181,10 @@ export default function DashboardPage() {
       });
     }
 
-    // Alerta de metas inalcançáveis (apenas se houver metas)
-    const totalGoalsMonthly = GOALS.reduce((sum, g) => sum + g.monthlyNeeded, 0);
+    // Metas ativas: quanto precisa guardar por mês para cumprir os prazos
+    const totalGoalsMonthly = goals
+      .filter(g => g.status === 'active')
+      .reduce((sum, g) => sum + goalMonthlyNeeded(g), 0);
     if (totalGoalsMonthly > availableAfterDebts && availableAfterDebts >= 0) {
       alerts.push({
         id: 'goals-unreachable',
@@ -204,7 +238,7 @@ export default function DashboardPage() {
         <div className="flex flex-wrap items-center gap-2">
           <MonthPicker value={referenceMonth} onChange={setReferenceMonth} />
           <Badge variant="success" className="text-sm px-4 py-2">
-            Score: {data.score}/100
+            Score: {score.total === null ? '—' : `${score.total}/100`}
           </Badge>
         </div>
       </div>
@@ -255,9 +289,21 @@ export default function DashboardPage() {
             <CardContent>
               <div className="text-3xl font-bold">{formatCurrency(monthlyIncome)}</div>
               <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
-                <ArrowUpRight className="h-3 w-3 text-green-500" />
-                <span className="text-green-500">+12%</span> vs mês anterior
+                {incomeChange === null ? (
+                  <span>sem receita no mês anterior</span>
+                ) : (
+                  <>
+                    {incomeChange >= 0 ? <ArrowUpRight className="h-3 w-3 text-green-500" /> : <ArrowDownRight className="h-3 w-3 text-red-500" />}
+                    <span className={incomeChange >= 0 ? 'text-green-500' : 'text-red-500'}>
+                      {incomeChange >= 0 ? '+' : ''}{incomeChange.toFixed(1)}%
+                    </span>{' '}
+                    vs mês anterior
+                  </>
+                )}
               </p>
+              {expectedIncome > 0 && (
+                <p className="text-xs text-muted-foreground">esperado {formatCurrency(expectedIncome)}</p>
+              )}
             </CardContent>
           </Card>
         </motion.div>
@@ -429,6 +475,18 @@ export default function DashboardPage() {
                       </p>
                     )}
                   </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Aportes em metas no mês</span>
+                    <span className="font-semibold text-blue-600">
+                      - {formatCurrency(goalContributions)}
+                    </span>
+                  </div>
+                  <div className="border-t pt-2 flex justify-between">
+                    <span className="font-bold">Livre para gastar</span>
+                    <span className={`font-bold ${freeToSpend < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                      = {formatCurrency(freeToSpend)}
+                    </span>
+                  </div>
                 </div>
               </div>
 
@@ -461,7 +519,7 @@ export default function DashboardPage() {
       </motion.div>
 
       {/* Alerts */}
-      {data.alerts.length > 0 && (
+      {monthAlerts.length > 0 && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -475,9 +533,9 @@ export default function DashboardPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              {data.alerts.map((alert, i) => (
+              {monthAlerts.slice(0, 5).map((alert) => (
                 <div
-                  key={i}
+                  key={alert.id}
                   className="flex items-start gap-3 p-3 rounded-lg bg-background/50 border border-border"
                 >
                   <div className="flex-1">
@@ -501,12 +559,12 @@ export default function DashboardPage() {
         <h2 className="text-xl font-semibold">Análise Financeira</h2>
         
         {/* Cashflow Chart - Full Width */}
-        <CashflowChart />
+        <CashflowChart data={cashflowData} />
 
         {/* Category and Budget Charts - Side by Side */}
         <div className="grid gap-6 lg:grid-cols-2">
-          <CategoryChart />
-          <BudgetChart />
+          <CategoryChart data={categoryChartData} />
+          <BudgetChart data={budgetChartData} />
         </div>
       </motion.div>
 
@@ -519,10 +577,13 @@ export default function DashboardPage() {
             <CardDescription>Top 5 categorias do mês</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {data.mainCategories.map((category, i) => (
-              <div key={i} className="space-y-2">
+            {topCategories.length === 0 && (
+              <p className="text-sm text-muted-foreground">Nenhuma despesa em {formatMonth(referenceMonth)}.</p>
+            )}
+            {topCategories.map((category, i) => (
+              <div key={category.name} className="space-y-2">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="font-medium">{category.categoryName}</span>
+                  <span className="font-medium">{category.icon} {category.name}</span>
                   <span className="text-muted-foreground">
                     {formatCurrency(category.amount)} ({category.percentage.toFixed(1)}%)
                   </span>
@@ -550,21 +611,24 @@ export default function DashboardPage() {
             <CardDescription>Acompanhe seus objetivos financeiros</CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
-            {data.goals.map((goal, i) => (
-              <div key={i} className="space-y-2">
+            {goalsInProgress.length === 0 && (
+              <p className="text-sm text-muted-foreground">Nenhuma meta ativa.</p>
+            )}
+            {goalsInProgress.map((goal, i) => (
+              <div key={goal.id} className="space-y-2">
                 <div className="flex items-center justify-between">
                   <div>
                     <h4 className="font-medium text-sm">{goal.name}</h4>
                     <p className="text-xs text-muted-foreground">
-                      {formatCurrency(goal.currentAmount)} de {formatCurrency(goal.targetAmount)}
+                      {goal.icon} {formatCurrency(goalCurrentAmount(goal))} de {formatCurrency(goal.targetAmount)}
                     </p>
                   </div>
-                  <Badge variant="info">{goal.percentage}%</Badge>
+                  <Badge variant="info">{goalPercentage(goal).toFixed(0)}%</Badge>
                 </div>
                 <div className="h-3 rounded-full bg-secondary overflow-hidden">
                   <motion.div
                     initial={{ width: 0 }}
-                    animate={{ width: `${goal.percentage}%` }}
+                    animate={{ width: `${goalPercentage(goal)}%` }}
                     transition={{ duration: 1, delay: 0.2 * i }}
                     className="h-full bg-gradient-to-r from-blue-500 to-cyan-500"
                   />

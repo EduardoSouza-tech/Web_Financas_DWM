@@ -38,6 +38,8 @@ export interface Installment {
   total: number;
   amount: number;
   invoiceMonth: MonthKey;
+  /** 'subscription' = cobrança gerada por assinatura; padrão = compra lançada */
+  source?: 'purchase' | 'subscription';
 }
 
 export function toMonthKey(year: number, month1to12: number): MonthKey {

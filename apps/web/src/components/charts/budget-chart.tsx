@@ -90,7 +90,7 @@ export default function BudgetChart({ data = defaultData }: BudgetChartProps) {
   const totalBudget = data.reduce((sum, item) => sum + item.budget, 0);
   const totalSpent = data.reduce((sum, item) => sum + item.spent, 0);
   const overBudgetCount = data.filter(item => item.percentage > 100).length;
-  const avgUtilization = (totalSpent / totalBudget) * 100;
+  const avgUtilization = totalBudget > 0 ? (totalSpent / totalBudget) * 100 : 0;
 
   return (
     <Card className="p-6 hover:shadow-lg transition-shadow duration-300">
@@ -118,7 +118,7 @@ export default function BudgetChart({ data = defaultData }: BudgetChartProps) {
           >
             <p className="text-xs text-green-600 dark:text-green-400 font-medium mb-1">Economizado</p>
             <p className="text-sm font-bold text-green-700 dark:text-green-300">
-              R$ {Math.max(0, totalBudget - totalSpent).toLocaleString('pt-BR', { minimumFractionDigits: 0 })}
+              R$ {Math.max(0, totalBudget - totalSpent).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}
             </p>
           </motion.div>
           <motion.div 

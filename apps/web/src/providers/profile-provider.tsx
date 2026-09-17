@@ -24,9 +24,11 @@ export interface Profile {
   avatar_color: string;
   avatar_emoji: string | null;
   position: number;
+  /** Renda mensal esperada do perfil (usada nas previsões) */
+  expected_income?: number | null;
 }
 
-export type ProfileInput = Pick<Profile, 'name' | 'avatar_color' | 'avatar_emoji'>;
+export type ProfileInput = Pick<Profile, 'name' | 'avatar_color' | 'avatar_emoji'> & { expected_income?: number | null };
 
 interface ProfileContextType {
   profiles: Profile[];

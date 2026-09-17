@@ -83,7 +83,7 @@ const renderActiveShape = (props: any) => {
 export default function CategoryChart({ data = defaultData }: CategoryChartProps) {
   const [activeIndex, setActiveIndex] = useState<number | undefined>(undefined);
   const total = data.reduce((sum, item) => sum + item.value, 0);
-  const topCategory = data.reduce((prev, current) => (prev.value > current.value ? prev : current));
+  const topCategory = data.reduce((prev, current) => (prev.value > current.value ? prev : current), { name: '-', value: 0, color: '#6b7280' });
 
   const onPieEnter = (_: any, index: number) => {
     setActiveIndex(index);

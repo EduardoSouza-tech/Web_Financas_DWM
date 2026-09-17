@@ -21,7 +21,8 @@ import {
   CreditCard,
   Zap,
   TrendingDown,
-  FileText
+  FileText,
+  HandCoins,
 } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -38,6 +39,7 @@ const navigation = [
   { name: 'Assinaturas', href: '/dashboard/subscriptions', icon: Zap },
   { name: 'Dívidas', href: '/dashboard/debts', icon: TrendingDown },
   { name: 'Conciliação', href: '/dashboard/conciliacao', icon: FileText },
+  { name: 'Acerto de contas', href: '/dashboard/acerto', icon: HandCoins },
   { name: 'Previsões', href: '/dashboard/forecasts', icon: TrendingUp },
   { name: 'Configurações', href: '/dashboard/settings', icon: Settings },
 ];

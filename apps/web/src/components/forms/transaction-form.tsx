@@ -1,12 +1,14 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { X, Tag as TagIcon, Calendar as CalendarIcon, CreditCard, Wallet } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { useFinance, type Transaction } from '@/contexts/FinanceContext'
+import { useProfiles } from '@/providers/profile-provider'
+import { SplitEditor } from '@/components/forms/split-editor'
 import {
   DEFAULT_CLOSING_DAY,
   addMonths,
@@ -15,6 +17,7 @@ import {
   invoiceMonthOf,
   invoicePeriod,
   splitAmount,
+  type Split,
 } from '@/lib/finance/credit-card'
 import { formatCurrency } from '@/lib/utils'
 
@@ -29,7 +32,18 @@ const optionClass = (active: boolean) =>
   }`
 
 export default function TransactionForm({ onClose, type = 'expense' }: TransactionFormProps) {
-  const { categories, cards, addTransaction } = useFinance()
+  const { categories, allCards, addTransaction } = useFinance()
+  const { profiles } = useProfiles()
+  const cards = allCards
+  const ownerName = (profileId?: string) => profiles.find(p => p.id === profileId)?.name ?? ''
+
+  // Divisão entre perfis (vazio = a transação inteira é de quem lançou)
+  const [splits, setSplits] = useState<Split[]>([])
+  const [splitsValid, setSplitsValid] = useState(true)
+  const handleSplitChange = useCallback((next: Split[], valid: boolean) => {
+    setSplits(next)
+    setSplitsValid(valid)
+  }, [])
 
   const [formData, setFormData] = useState({
     type: type as 'income' | 'expense',
@@ -75,6 +89,7 @@ export default function TransactionForm({ onClose, type = 'expense' }: Transacti
   }, [isCard, formData.ongoing, formData.currentInvoiceMonth, formData.date, currentInstallment, installmentsCount, closingDay, totalAmount])
 
   const canSubmit =
+    splitsValid &&
     value > 0 &&
     !!formData.description &&
     !!formData.categoryId &&
@@ -93,6 +108,7 @@ export default function TransactionForm({ onClose, type = 'expense' }: Transacti
       date: formData.date,
       tags: formData.tags,
       paymentMethod: isCard ? 'credit_card' : 'cash',
+      splits,
     }
     if (isCard && plan) {
       tx.cardId = formData.cardId
@@ -186,11 +202,16 @@ export default function TransactionForm({ onClose, type = 'expense' }: Transacti
             <div className="p-4 rounded-lg border bg-muted/50 space-y-4">
               <div>
                 <label className="text-sm font-medium mb-2 block">Cartão</label>
+                <p className="text-xs text-muted-foreground mb-2">
+                  A fatura e o limite ficam com o dono do cartão; o gasto vai para quem você indicar na divisão.
+                </p>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   {cards.map(c => (
                     <button key={c.id} type="button" className={optionClass(formData.cardId === c.id)} onClick={() => set({ cardId: c.id })}>
                       <div className="font-medium text-sm">{c.name}</div>
-                      <div className="text-xs text-muted-foreground">Fecha dia {c.closingDay ?? DEFAULT_CLOSING_DAY}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {ownerName(c.profile_id) && <>de {ownerName(c.profile_id)} · </>}fecha dia {c.closingDay ?? DEFAULT_CLOSING_DAY}
+                      </div>
                     </button>
                   ))}
                 </div>
@@ -295,6 +316,13 @@ export default function TransactionForm({ onClose, type = 'expense' }: Transacti
               ))}
             </div>
           </div>
+
+          {/* Divisão entre perfis */}
+          <SplitEditor
+            total={totalAmount}
+            onChange={handleSplitChange}
+            hint={isCard && installmentsCount > 1 ? 'Cada parcela é dividida na mesma proporção.' : undefined}
+          />
 
           {/* Tags */}
           <div>

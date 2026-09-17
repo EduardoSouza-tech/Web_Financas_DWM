@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Plus, Calendar, CreditCard, Wallet, Pause, Play, Trash2, Edit, X, Ban, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -9,6 +9,9 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { useFinance } from '@/contexts/FinanceContext';
 import { useConfirm } from '@/providers/confirm-provider';
+import { useProfiles } from '@/providers/profile-provider';
+import { SplitEditor } from '@/components/forms/split-editor';
+import type { Split } from '@/lib/finance/credit-card';
 import { formatCurrency, cn } from '@/lib/utils';
 import { formatDateBR, formatMonth } from '@/lib/finance/credit-card';
 import {
@@ -32,6 +35,7 @@ type FormState = {
   paymentMethod: 'cash' | 'credit_card';
   cardId: string;
   icon: string;
+  splits: Split[];
 };
 
 export default function SubscriptionsPage() {
@@ -43,6 +47,7 @@ export default function SubscriptionsPage() {
     deleteSubscription,
     categories,
     cards,
+    allCards,
     referenceMonth,
     getMonthSummary,
   } = useFinance();
@@ -54,11 +59,18 @@ export default function SubscriptionsPage() {
     frequency: 'monthly',
     billingDay: String(new Date().getDate()),
     billingMonth: String(new Date().getMonth() + 1),
-    paymentMethod: cards.length > 0 ? 'credit_card' : 'cash',
-    cardId: cards[0]?.id ?? '',
+    paymentMethod: allCards.length > 0 ? 'credit_card' : 'cash',
+    cardId: allCards[0]?.id ?? '',
     icon: '📱',
+    splits: [],
   });
   const [form, setForm] = useState<FormState | null>(null);
+  const [splitsValid, setSplitsValid] = useState(true);
+  const { profiles } = useProfiles();
+  const handleSplitChange = useCallback((splits: Split[], valid: boolean) => {
+    setForm(prev => (prev ? { ...prev, splits } : prev));
+    setSplitsValid(valid);
+  }, []);
 
   const active = subscriptions.filter(s => s.status === 'active');
   const monthlyTotal = active.reduce((sum, s) => sum + subscriptionMonthlyCost(s), 0);
@@ -69,7 +81,8 @@ export default function SubscriptionsPage() {
     .filter((x): x is { sub: Subscription; date: string } => !!x.date)
     .sort((a, b) => a.date.localeCompare(b.date));
 
-  const cardName = (id?: string) => cards.find(c => c.id === id)?.name ?? 'Cartão removido';
+  const cardName = (id?: string) => allCards.find((c: any) => c.id === id)?.name ?? 'Cartão removido';
+  const profileName = (id: string) => profiles.find(p => p.id === id)?.name ?? '';
 
   const openEdit = (s: Subscription) =>
     setForm({
@@ -81,15 +94,16 @@ export default function SubscriptionsPage() {
       billingDay: String(s.billingDay),
       billingMonth: String(s.billingMonth ?? 1),
       paymentMethod: s.paymentMethod,
-      cardId: s.cardId ?? cards[0]?.id ?? '',
+      cardId: s.cardId ?? allCards[0]?.id ?? '',
       icon: s.icon,
+      splits: s.splits ?? [],
     });
 
   const submit = () => {
     if (!form) return;
     const amount = parseFloat(form.amount);
     const day = parseInt(form.billingDay);
-    if (!form.name.trim() || !(amount > 0) || !(day >= 1 && day <= 31)) return;
+    if (!form.name.trim() || !(amount > 0) || !(day >= 1 && day <= 31) || !splitsValid) return;
     saveSubscription({
       id: form.id,
       name: form.name.trim(),
@@ -101,6 +115,7 @@ export default function SubscriptionsPage() {
       paymentMethod: form.paymentMethod,
       cardId: form.paymentMethod === 'credit_card' ? form.cardId : undefined,
       icon: form.icon,
+      splits: form.splits,
     });
     setForm(null);
   };
@@ -337,7 +352,7 @@ export default function SubscriptionsPage() {
                   variant={form.paymentMethod === 'credit_card' ? 'default' : 'outline'}
                   className="gap-2"
                   disabled={cards.length === 0}
-                  onClick={() => setForm({ ...form, paymentMethod: 'credit_card', cardId: form.cardId || cards[0]?.id || '' })}
+                  onClick={() => setForm({ ...form, paymentMethod: 'credit_card', cardId: form.cardId || allCards[0]?.id || '' })}
                 >
                   <CreditCard className="w-4 h-4" /> Cartão
                 </Button>
@@ -348,8 +363,11 @@ export default function SubscriptionsPage() {
                   onChange={e => setForm({ ...form, cardId: e.target.value })}
                   className="mt-2 w-full h-10 px-3 bg-background border rounded-md"
                 >
-                  {cards.map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
+                  {allCards.map((c: any) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                      {profileName(c.profile_id) ? ` — ${profileName(c.profile_id)}` : ''}
+                    </option>
                   ))}
                 </select>
               )}
@@ -371,6 +389,14 @@ export default function SubscriptionsPage() {
               </div>
             </div>
 
+            <SplitEditor
+              total={parseFloat(form.amount) || 0}
+              initialSplits={form.splits}
+              onChange={handleSplitChange}
+              title="Dividir a assinatura entre perfis"
+              hint="Cada cobrança entra nas análises de quem tem parte nela."
+            />
+
             <p className="text-xs text-muted-foreground">
               {form.id
                 ? 'Alterar valor, dia ou forma de pagamento vale também para as cobranças já geradas.'
@@ -379,7 +405,7 @@ export default function SubscriptionsPage() {
 
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setForm(null)}>Cancelar</Button>
-              <Button onClick={submit}>Salvar</Button>
+              <Button onClick={submit} disabled={!splitsValid}>Salvar</Button>
             </div>
           </motion.div>
         </div>

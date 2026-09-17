@@ -13,6 +13,7 @@ import {
   Trash2,
   FileText,
   Calendar,
+  Users,
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -23,7 +24,8 @@ import TransactionForm from '@/components/forms/transaction-form'
 import { useConfirm } from '@/providers/confirm-provider'
 import { MonthPicker } from '@/components/month-picker'
 import { useFinance, isCardTransaction, type Transaction } from '@/contexts/FinanceContext'
-import { formatDateBR, formatMonth, monthOfDate, splitAmount } from '@/lib/finance/credit-card'
+import { formatDateBR, formatMonth, monthOfDate, splitAmount, amountForProfile } from '@/lib/finance/credit-card'
+import { useProfiles } from '@/providers/profile-provider'
 
 type TypeFilter = 'all' | 'income' | 'expense'
 type PaymentFilter = 'all' | 'cash' | 'credit_card'
@@ -34,6 +36,7 @@ export default function TransactionsPage() {
     transactions,
     categories,
     cards,
+    allCards,
     referenceMonth,
     setReferenceMonth,
     deleteTransaction,
@@ -48,8 +51,12 @@ export default function TransactionsPage() {
   const [filterPayment, setFilterPayment] = useState<PaymentFilter>('all')
   const [filterCategory, setFilterCategory] = useState('all')
 
+  const { profiles, activeProfileId, isFamilyView } = useProfiles()
   const iconOf = (name: string) => categories.find(c => c.name === name)?.icon ?? '📁'
-  const cardName = (id?: string) => cards.find(c => c.id === id)?.name ?? 'Cartão removido'
+  const cardName = (id?: string) => allCards.find((c: any) => c.id === id)?.name ?? 'Cartão removido'
+  const profileName = (id?: string) => profiles.find(p => p.id === id)?.name ?? ''
+  /** Quanto desta transação é do perfil aberto (na visão Família, o valor cheio) */
+  const myShare = (tx: Transaction) => amountForProfile(tx, isFamilyView ? null : activeProfileId)
 
   // Lançamentos do mês pela data (compras no cartão aparecem na data da compra)
   const monthTransactions = useMemo(
@@ -250,6 +257,12 @@ export default function TransactionsPage() {
                             {card ? <CreditCard className="w-3 h-3" /> : <Wallet className="w-3 h-3" />}
                             {card ? cardName(tx.cardId) : 'À vista'}
                           </span>
+                          {(tx.splits?.length ?? 0) > 1 && (
+                            <Badge variant="outline" className="text-xs flex items-center gap-1">
+                              <Users className="w-3 h-3" />
+                              dividido com {tx.splits!.map(s => profileName(s.profile_id)).filter(Boolean).join(', ')}
+                            </Badge>
+                          )}
                           {card && count > 1 && (
                             <Badge variant="outline" className="text-xs">
                               {(tx.firstInstallment ?? 1) > 1 ? `da ${tx.firstInstallment}ª ` : ''}
@@ -269,9 +282,16 @@ export default function TransactionsPage() {
                     </div>
 
                     <div className="flex items-center gap-2">
-                      <p className={`text-lg font-bold whitespace-nowrap ${tx.type === 'income' ? 'text-green-500' : 'text-red-500'}`}>
-                        {tx.type === 'income' ? '+' : '-'} {formatCurrency(tx.amount)}
-                      </p>
+                      <div className="text-right">
+                        <p className={`text-lg font-bold whitespace-nowrap ${tx.type === 'income' ? 'text-green-500' : 'text-red-500'}`}>
+                          {tx.type === 'income' ? '+' : '-'} {formatCurrency(tx.amount)}
+                        </p>
+                        {!isFamilyView && myShare(tx) !== tx.amount && (
+                          <p className="text-xs text-muted-foreground whitespace-nowrap">
+                            sua parte {formatCurrency(myShare(tx))}
+                          </p>
+                        )}
+                      </div>
                       <Button
                         variant="ghost"
                         size="sm"

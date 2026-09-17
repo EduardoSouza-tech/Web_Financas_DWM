@@ -13,6 +13,12 @@ export const DEFAULT_CLOSING_DAY = 5;
 /** 'YYYY-MM' */
 export type MonthKey = string;
 
+/** Parte de um valor que cabe a um perfil */
+export interface Split {
+  profile_id: string;
+  amount: number;
+}
+
 export interface CardPurchase {
   id: string;
   profile_id?: string;
@@ -24,6 +30,8 @@ export interface CardPurchase {
   installments?: number; // total de parcelas (padrão 1)
   firstInstallment?: number; // primeira parcela lançada no sistema (padrão 1)
   firstInvoiceMonth?: MonthKey; // fatura da parcela 1 (calculada no cadastro)
+  /** Divisão entre perfis; vazio = tudo do profile_id da compra */
+  splits?: Split[];
 }
 
 export interface Installment {
@@ -38,6 +46,8 @@ export interface Installment {
   total: number;
   amount: number;
   invoiceMonth: MonthKey;
+  /** Divisão desta parcela entre perfis (soma pode diferir de `amount` em centavos) */
+  shares?: Split[];
   /** 'subscription' = cobrança gerada por assinatura; padrão = compra lançada */
   source?: 'purchase' | 'subscription';
 }
@@ -86,6 +96,48 @@ export function invoicePeriod(month: MonthKey, closingDay = DEFAULT_CLOSING_DAY)
   };
 }
 
+/**
+ * Quanto do valor cabe a um perfil.
+ * Sem divisão, o valor inteiro é de quem lançou. `profileId` nulo = visão Família (valor cheio).
+ */
+export function amountForProfile(
+  item: { amount: number; profile_id?: string; splits?: Split[]; shares?: Split[] },
+  profileId: string | null | undefined
+): number {
+  const splits = item.splits ?? item.shares;
+  if (!splits || splits.length === 0) {
+    if (profileId == null) return item.amount;
+    return item.profile_id === profileId ? item.amount : 0;
+  }
+  if (profileId == null) return item.amount;
+  return splits.find(s => s.profile_id === profileId)?.amount ?? 0;
+}
+
+/** O perfil participa do item (lançou ou tem parte na divisão)? */
+export function involvesProfile(
+  item: { profile_id?: string; splits?: Split[]; shares?: Split[] },
+  profileId: string | null | undefined
+): boolean {
+  if (profileId == null) return true;
+  if (item.profile_id === profileId) return true;
+  const splits = item.splits ?? item.shares;
+  return !!splits?.some(s => s.profile_id === profileId);
+}
+
+/** Divide um valor igualmente entre perfis; a diferença de centavos vai para os primeiros */
+export function equalSplit(total: number, profileIds: string[]): Split[] {
+  if (profileIds.length === 0) return [];
+  const cents = Math.round(total * 100);
+  const base = Math.floor(cents / profileIds.length);
+  const rest = cents - base * profileIds.length;
+  return profileIds.map((profile_id, i) => ({ profile_id, amount: (base + (i < rest ? 1 : 0)) / 100 }));
+}
+
+/** Soma das partes (arredondada em centavos) */
+export function splitsTotal(splits: Split[]): number {
+  return Math.round(splits.reduce((sum, s) => sum + (Number(s.amount) || 0), 0) * 100) / 100;
+}
+
 /** Divide em centavos; a última parcela absorve a sobra do arredondamento */
 export function splitAmount(total: number, installments: number): number[] {
   const cents = Math.round(total * 100);
@@ -100,6 +152,8 @@ export function expandInstallments(purchase: CardPurchase, closingDay = DEFAULT_
   const first = Math.min(Math.max(1, purchase.firstInstallment ?? 1), total);
   const firstInvoice = purchase.firstInvoiceMonth ?? invoiceMonthOf(purchase.date, closingDay);
   const amounts = splitAmount(purchase.amount, total);
+  // A parte de cada perfil também é dividida pelas parcelas, para os centavos fecharem no fim
+  const shareAmounts = (purchase.splits ?? []).map(s => ({ profile_id: s.profile_id, parcels: splitAmount(s.amount, total) }));
 
   const result: Installment[] = [];
   for (let n = first; n <= total; n++) {
@@ -114,6 +168,7 @@ export function expandInstallments(purchase: CardPurchase, closingDay = DEFAULT_
       number: n,
       total,
       amount: amounts[n - 1],
+      shares: shareAmounts.length ? shareAmounts.map(s => ({ profile_id: s.profile_id, amount: s.parcels[n - 1] })) : undefined,
       invoiceMonth: addMonths(firstInvoice, n - 1),
     });
   }

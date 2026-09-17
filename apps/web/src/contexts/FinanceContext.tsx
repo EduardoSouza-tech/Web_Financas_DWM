@@ -11,8 +11,11 @@ import {
   expandInstallments,
   invoiceMonthOf,
   monthOfDate,
+  amountForProfile,
+  involvesProfile,
   type Installment,
   type MonthKey,
+  type Split,
 } from '@/lib/finance/credit-card';
 import {
   addMonthsToDate,
@@ -26,6 +29,7 @@ import {
   withSubscriptionStatus,
   type CashCharge,
   type DebtPayment,
+  type DebtShare,
   type ForecastMonth,
   type Goal,
   type ScoreCriterion,
@@ -33,6 +37,7 @@ import {
 } from '@/lib/finance/engine';
 import { computeHealth, type FinancialHealth } from '@/lib/finance/health';
 import { seedCards, seedDebts, seedGoals, seedSubscriptions, seedTransactions } from '@/lib/finance/seed';
+import { computeBalances, settleBalances, type Balance, type SharedItem, type Transfer } from '@/lib/finance/settlement';
 import { isUuid, loadAll, newUuid, repo } from '@/lib/finance/repository';
 import { enqueue, flushQueue, isNetworkError, readQueue, type RepoMethod } from '@/lib/finance/sync-queue';
 import {
@@ -66,6 +71,8 @@ export interface Transaction {
   firstInstallment?: number;
   firstInvoiceMonth?: MonthKey;
   tags?: string[];
+  /** Divisão entre perfis; vazio = tudo de quem lançou */
+  splits?: Split[];
 }
 
 export interface InvoiceState {
@@ -135,6 +142,8 @@ interface FinanceContextType {
 
   cards: any[];
   setCards: (cards: any[]) => void;
+  /** Cartões de todos os perfis da conta (para lançar compra no cartão de outra pessoa) */
+  allCards: any[];
   /** Parcelas e assinaturas no cartão (todas as faturas) */
   installments: Installment[];
   getInstallmentsForInvoice: (month: MonthKey, cardId?: string) => Installment[];
@@ -145,6 +154,14 @@ interface FinanceContextType {
 
   /** Dívidas ativas do perfil */
   debts: any[];
+  /** Partes de cada perfil nas dívidas divididas */
+  debtShares: DebtShare[];
+  /** Regrava a divisão de uma dívida */
+  saveDebtShares: (debtId: string, splits: { profile_id: string; amount: number }[]) => void;
+  /** Um perfil paga a parte dele na parcela atual */
+  payDebtShare: (debtId: string, profileId: string, date?: string) => void;
+  /** Quem deve a quem: saldos e transferências que zeram a conta */
+  getSettlement: (month?: MonthKey) => { items: SharedItem[]; balances: Balance[]; transfers: Transfer[] };
   /** Dívidas quitadas (histórico) */
   paidDebts: any[];
   debtPayments: DebtPayment[];
@@ -217,6 +234,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const [allSubscriptions, setAllSubscriptions] = useState<Subscription[]>([]);
   const [allGoals, setAllGoals] = useState<Goal[]>([]);
   const [allDebtPayments, setAllDebtPayments] = useState<DebtPayment[]>([]);
+  const [debtShares, setDebtShares] = useState<DebtShare[]>([]);
 
   const [categories, setCategories] = useState<Category[]>(() => DEFAULT_CATEGORIES.map(c => ({ ...c, id: newId() })));
   const [invoices, setInvoices] = useState<Record<string, InvoiceState>>({});
@@ -303,6 +321,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
         setAllTransactions(data.transactions);
         setAllDebts(data.debts);
         setAllDebtPayments(data.debtPayments);
+        setDebtShares(data.debtShares ?? []);
         setAllCards(data.cards);
         setAllSubscriptions(data.subscriptions);
         setAllGoals(data.goals);
@@ -337,9 +356,30 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [remote, user?.id, reloadToken]);
 
+  /** Perfil das análises: null na visão Família (valores cheios) */
+  const viewProfileId = isFamilyView ? null : activeProfileId;
+
   const inView = useCallback(
     (item: { profile_id?: string }) => isFamilyView || item.profile_id === activeProfileId,
     [isFamilyView, activeProfileId]
+  );
+
+  /** Transações do perfil: lançadas por ele, divididas com ele, ou feitas no cartão dele */
+  const transactionInView = useCallback(
+    (tx: Transaction) => {
+      if (isFamilyView) return true;
+      if (involvesProfile(tx, activeProfileId)) return true;
+      if (!tx.cardId) return false;
+      return allCards.some(card => card.id === tx.cardId && card.profile_id === activeProfileId);
+    },
+    [isFamilyView, activeProfileId, allCards]
+  );
+
+  /** Quanto deste item entra nas análises do perfil ativo */
+  const shareOf = useCallback(
+    (item: { amount: number; profile_id?: string; splits?: Split[]; shares?: Split[] }) =>
+      amountForProfile(item, viewProfileId),
+    [viewProfileId]
   );
 
   // Setter que só substitui os itens visíveis no perfil atual, preservando os dos outros perfis,
@@ -376,15 +416,23 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
   const [referenceMonth, setReferenceMonth] = useState<MonthKey>(() => currentMonthKey());
 
-  const transactions = useMemo(() => allTransactions.filter(inView), [allTransactions, inView]);
-  const debts = useMemo(() => allDebts.filter(d => inView(d) && d.status !== 'paid'), [allDebts, inView]);
-  const paidDebts = useMemo(() => allDebts.filter(d => inView(d) && d.status === 'paid'), [allDebts, inView]);
-  const subscriptions = useMemo(() => allSubscriptions.filter(inView), [allSubscriptions, inView]);
+  const transactions = useMemo(() => allTransactions.filter(transactionInView), [allTransactions, transactionInView]);
+  /** Dívida dividida também é do perfil que tem parte nela */
+  const debtInView = useCallback(
+    (debt: any) => inView(debt) || debtShares.some(s => s.debtId === debt.id && s.profile_id === activeProfileId),
+    [inView, debtShares, activeProfileId]
+  );
+  const debts = useMemo(() => allDebts.filter(d => debtInView(d) && d.status !== 'paid'), [allDebts, debtInView]);
+  const paidDebts = useMemo(() => allDebts.filter(d => debtInView(d) && d.status === 'paid'), [allDebts, debtInView]);
+  const subscriptions = useMemo(
+    () => allSubscriptions.filter(s => involvesProfile({ ...s, splits: s.splits }, viewProfileId)),
+    [allSubscriptions, viewProfileId]
+  );
   const goals = useMemo(() => allGoals.filter(inView), [allGoals, inView]);
 
   const closingDayOf = useCallback(
-    (profileId: string | undefined, cardId: string) =>
-      allCards.find(c => c.id === cardId && c.profile_id === profileId)?.closingDay ?? DEFAULT_CLOSING_DAY,
+    (_profileId: string | undefined, cardId: string) =>
+      allCards.find(c => c.id === cardId)?.closingDay ?? DEFAULT_CLOSING_DAY,
     [allCards]
   );
 
@@ -409,7 +457,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     () => [
       ...(transactions as Transaction[])
         .filter(tx => isCardTransaction(tx) && tx.cardId)
-        .flatMap(tx => expandInstallments({ ...tx, cardId: tx.cardId! }, closingDayOf(tx.profile_id, tx.cardId!))),
+        .flatMap(tx => expandInstallments({ ...tx, cardId: tx.cardId!, splits: tx.splits }, closingDayOf(tx.profile_id, tx.cardId!))),
       ...subscriptionCharges.card,
     ],
     [transactions, subscriptionCharges, closingDayOf]
@@ -472,7 +520,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     const today = todayISO();
     return allCards.filter(inView).map(card => {
       const closingDay = card.closingDay ?? DEFAULT_CLOSING_DAY;
-      const own = installments.filter(i => i.cardId === card.id && i.profile_id === card.profile_id);
+      const own = installments.filter(i => i.cardId === card.id);
       const unpaid = own.filter(
         i =>
           !invoices[invoiceKey(i.profile_id, i.cardId, i.invoiceMonth)]?.paidAt &&
@@ -502,6 +550,9 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     const record = { ...tx, id: newId('tx'), profile_id: targetProfileId };
     setAllTransactions(prev => [record, ...prev]);
     persist('upsertTransaction', user!.id, record);
+    if (record.splits && record.splits.length > 0) {
+      persist('saveTransactionSplits', user!.id, record.id, record.profile_id, record.splits);
+    }
   };
 
   const deleteTransaction = (id: string) => {
@@ -534,14 +585,84 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     return { ...debt, status: 'paid', paidAt: new Date().toISOString(), remainingAmount: 0, installmentsPaid: debt.totalInstallments };
   };
 
+  /** Regrava a divisão de uma dívida (cada perfil paga a sua parte de cada parcela) */
+  const saveDebtShares = (debtId: string, splits: { profile_id: string; amount: number }[]) => {
+    const kept = debtShares.filter(s => s.debtId !== debtId);
+    if (splits.length === 0) {
+      setDebtShares(kept);
+      persist('deleteDebtShares', debtId);
+      return;
+    }
+    const existing = new Map(debtShares.filter(s => s.debtId === debtId).map(s => [s.profile_id, s]));
+    const next: DebtShare[] = splits.map(split => {
+      const current = existing.get(split.profile_id);
+      return {
+        id: current?.id ?? newId('share'),
+        debtId,
+        profile_id: split.profile_id,
+        shareAmount: split.amount,
+        installmentsPaid: current?.installmentsPaid ?? 0,
+      };
+    });
+    setDebtShares([...kept, ...next]);
+    next.forEach(share => persist('upsertDebtShare', user!.id, share));
+  };
+
+  /** A parcela atual da dívida já foi paga por todos? */
+  const debtSharesOf = (debtId: string) => debtShares.filter(s => s.debtId === debtId);
+
+  /** Um perfil paga a parte dele na parcela atual; a parcela fecha quando todos pagarem */
+  const payDebtShare = (debtId: string, profileId: string, date = todayISO()) => {
+    const debt = allDebts.find(d => d.id === debtId);
+    if (!debt || debt.status === 'paid') return;
+    const shares = debtSharesOf(debtId);
+    const share = shares.find(s => s.profile_id === profileId);
+    const installment = debt.installmentsPaid + 1;
+    if (!share || share.installmentsPaid >= installment) return;
+
+    const updated = { ...share, installmentsPaid: share.installmentsPaid + 1 };
+    const nextShares = shares.map(s => (s.profile_id === profileId ? updated : s));
+    setDebtShares(prev => prev.map(s => (s.id === share.id ? updated : s)));
+    persist('upsertDebtShare', user!.id, updated);
+
+    const payment: DebtPayment = {
+      id: newId(),
+      profile_id: profileId,
+      debtId,
+      date,
+      amount: share.shareAmount,
+      installments: 1,
+      kind: 'installment',
+      installmentNumber: installment,
+    };
+    setAllDebtPayments(prev => [...prev, payment]);
+    persist('insertDebtPayment', user!.id, payment);
+
+    // Parcela só é quitada quando todas as partes forem pagas
+    if (nextShares.some(s => s.installmentsPaid < installment)) return;
+    const paidNow = nextShares.reduce((sum, s) => sum + s.shareAmount, 0);
+    const next = finishIfDone({
+      ...debt,
+      installmentsPaid: installment,
+      remainingAmount: Math.max(0, debt.remainingAmount - paidNow),
+      nextDueDate: addMonthsToDate(debt.nextDueDate, 1),
+    });
+    saveDebt(next);
+    if (next.status === 'paid') addAchievement(debt, paidNow);
+  };
+
   const addDebt = (debt: any) => {
-    saveDebt({ ...debt, id: newId(), profile_id: targetProfileId, status: 'active' });
+    const { splits, ...rest } = debt ?? {};
+    const id = newId();
+    saveDebt({ ...rest, id, profile_id: targetProfileId, status: 'active' });
+    if (splits?.length) saveDebtShares(id, splits);
   };
 
   // Excluir = lançamento errado: some a dívida, os pagamentos (cascata no banco) e a conquista dela.
   // Para manter o histórico, use quitar.
   const deleteDebt = (id: string) => {
     setAllDebts(prev => prev.filter(d => d.id !== id));
+    setDebtShares(prev => prev.filter(s => s.debtId !== id));
     setAllDebtPayments(prev => prev.filter(p => p.debtId !== id));
     persist('deleteDebt', id);
     const achievementIds = achievements.filter(a => a.debtId === id).map(a => a.id);
@@ -590,7 +711,105 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     addAchievement(debt, amount);
   };
 
-  const getDebtPaymentsForMonth = (month: MonthKey) => debtPaymentsForMonth(month, debts, debtPayments);
+  /**
+   * Dívida dividida: nas análises do perfil entra só a parte dele.
+   * Na visão Família continua valendo a parcela cheia.
+   */
+  const debtsForAnalysis = useMemo(
+    () =>
+      debts.map(debt => {
+        const shares = debtShares.filter(s => s.debtId === debt.id);
+        if (shares.length === 0 || viewProfileId == null) return debt;
+        const mine = shares.find(s => s.profile_id === viewProfileId);
+        return { ...debt, monthlyPayment: mine?.shareAmount ?? 0 };
+      }),
+    [debts, debtShares, viewProfileId]
+  );
+
+  const getDebtPaymentsForMonth = (month: MonthKey) => debtPaymentsForMonth(month, debtsForAnalysis, debtPayments);
+
+  // ============================================
+  // Acerto de contas da família (quem deve a quem)
+  // ============================================
+  /** Quem desembolsa: no crédito é o dono do cartão, à vista é quem lançou */
+  const payerOf = useCallback(
+    (item: { profile_id?: string; cardId?: string }) =>
+      (item.cardId ? allCards.find(c => c.id === item.cardId)?.profile_id : undefined) ?? item.profile_id ?? '',
+    [allCards]
+  );
+
+  /** Todas as movimentações divididas da família, mês a mês */
+  const sharedItems = useMemo<(SharedItem & { month: MonthKey })[]>(() => {
+    const items: (SharedItem & { month: MonthKey })[] = [];
+
+    (allTransactions as Transaction[]).forEach(tx => {
+      if ((tx.splits?.length ?? 0) < 2) return;
+      // Compra no cartão entra no mês da fatura (é quando o dono do cartão desembolsa)
+      if (isCardTransaction(tx) && tx.cardId) {
+        expandInstallments({ ...tx, cardId: tx.cardId, splits: tx.splits }, closingDayOf(tx.profile_id, tx.cardId)).forEach(inst => {
+          if (!inst.shares?.length) return;
+          items.push({
+            month: inst.invoiceMonth,
+            date: inst.purchaseDate,
+            payerProfileId: payerOf(tx),
+            direction: tx.type,
+            splits: inst.shares,
+            description: inst.total > 1 ? `${tx.description} (${inst.number}/${inst.total})` : tx.description,
+          });
+        });
+        return;
+      }
+      items.push({
+        month: monthOfDate(tx.date),
+        date: tx.date,
+        payerProfileId: payerOf(tx),
+        direction: tx.type,
+        splits: tx.splits!,
+        description: tx.description,
+      });
+    });
+
+    allSubscriptions.forEach(sub => {
+      if ((sub.splits?.length ?? 0) < 2) return;
+      const closingDay = sub.cardId ? closingDayOf(sub.profile_id, sub.cardId) : DEFAULT_CLOSING_DAY;
+      const expanded = expandSubscription(sub, horizon, closingDay);
+      expanded.card.forEach(charge => {
+        items.push({
+          month: charge.invoiceMonth,
+          date: charge.purchaseDate,
+          payerProfileId: payerOf({ profile_id: sub.profile_id, cardId: sub.cardId }),
+          direction: 'expense',
+          splits: charge.shares ?? [],
+          description: charge.description,
+        });
+      });
+      expanded.cash.forEach(charge => {
+        items.push({
+          month: monthOfDate(charge.date),
+          date: charge.date,
+          payerProfileId: sub.profile_id ?? '',
+          direction: 'expense',
+          splits: charge.splits ?? [],
+          description: charge.description,
+        });
+      });
+    });
+
+    return items;
+  }, [allTransactions, allSubscriptions, horizon, closingDayOf, payerOf]);
+
+  /**
+   * Saldo entre perfis. Sem `month`, é o acumulado de tudo que já foi lançado.
+   * Dívidas divididas não entram: cada um paga a sua parte direto.
+   */
+  const getSettlement = useCallback(
+    (month?: MonthKey) => {
+      const items = month ? sharedItems.filter(i => i.month === month) : sharedItems;
+      const balances = computeBalances(items);
+      return { items, balances, transfers: settleBalances(balances) };
+    },
+    [sharedItems]
+  );
 
   // ============================================
   // Assinaturas
@@ -767,21 +986,25 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       let cashExpenses = 0;
       (transactions as Transaction[]).forEach(tx => {
         if (monthOfDate(tx.date) !== month) return;
-        if (tx.type === 'income') income += tx.amount;
+        const amount = shareOf(tx); // divisão entre perfis; visão Família usa o valor cheio
+        if (amount === 0) return;
+        if (tx.type === 'income') income += amount;
         else if (!isCardTransaction(tx)) {
-          cashExpenses += tx.amount;
-          add(tx.category, tx.amount);
+          cashExpenses += amount;
+          add(tx.category, amount);
         }
       });
 
       const cashCharges = subscriptionCharges.cash.filter(c => monthOfDate(c.date) === month);
-      cashCharges.forEach(c => add(c.category, c.amount));
-      const cashSubscriptions = cashCharges.reduce((s, c) => s + c.amount, 0);
+      cashCharges.forEach(c => add(c.category, shareOf(c)));
+      const cashSubscriptions = cashCharges.reduce((s, c) => s + shareOf(c), 0);
 
       const monthInstallments = installments.filter(i => i.invoiceMonth === month);
-      monthInstallments.forEach(i => add(i.category, i.amount));
-      const cardExpenses = monthInstallments.reduce((s, i) => s + i.amount, 0);
-      const cardSubscriptions = monthInstallments.filter(i => i.source === 'subscription').reduce((s, i) => s + i.amount, 0);
+      monthInstallments.forEach(i => add(i.category, shareOf(i)));
+      const cardExpenses = monthInstallments.reduce((s, i) => s + shareOf(i), 0);
+      const cardSubscriptions = monthInstallments
+        .filter(i => i.source === 'subscription')
+        .reduce((s, i) => s + shareOf(i), 0);
 
       return {
         month,
@@ -795,10 +1018,10 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
         cashCharges,
       };
     },
-    [transactions, subscriptionCharges, installments, goals]
+    [transactions, subscriptionCharges, installments, goals, shareOf]
   );
 
-  const getMonthlyDebtCommitment = () => debts.reduce((sum, debt) => sum + debt.monthlyPayment, 0);
+  const getMonthlyDebtCommitment = () => debtsForAnalysis.reduce((sum, debt) => sum + debt.monthlyPayment, 0);
   /** Pagamentos de dívidas do mês de referência: pagos + ainda a vencer */
   const getTotalDebtPayments = () => getDebtPaymentsForMonth(referenceMonth).total;
 
@@ -835,12 +1058,12 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     const txs = transactions as Transaction[];
     const habitualCash = txs
       .filter(tx => tx.type === 'expense' && !isCardTransaction(tx) && monthOfDate(tx.date) === referenceMonth)
-      .reduce((s, tx) => s + tx.amount, 0);
+      .reduce((s, tx) => s + shareOf(tx), 0);
     const oneOffCardIds = new Set(txs.filter(tx => isCardTransaction(tx) && (tx.installments ?? 1) <= 1).map(tx => tx.id));
     // Hábito no cartão = compras à vista FEITAS no mês base (a fatura do mês base só pega parte delas)
     const habitualCard = txs
       .filter(tx => oneOffCardIds.has(tx.id) && monthOfDate(tx.date) === referenceMonth)
-      .reduce((s, tx) => s + tx.amount, 0);
+      .reduce((s, tx) => s + shareOf(tx), 0);
 
     // parcelas (>1x) e assinaturas conhecidas para meses futuros
     const futureHorizon = addMonths(referenceMonth, months + 1);
@@ -850,7 +1073,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     const committedExpenses = (month: MonthKey) =>
       installments
         .filter(i => i.invoiceMonth === month && i.source !== 'subscription' && !oneOffCardIds.has(i.purchaseId))
-        .reduce((s, i) => s + i.amount, 0) +
+        .reduce((s, i) => s + shareOf(i), 0) +
       futureSubs.reduce(
         (s, e) =>
           s +
@@ -900,6 +1123,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     deleteTransaction,
     cards,
     setCards,
+    allCards,
     installments,
     getInstallmentsForInvoice,
     getInvoice,
@@ -907,6 +1131,10 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     setInvoiceStatementAmount,
     setInvoicePaid,
     debts,
+    debtShares,
+    saveDebtShares,
+    payDebtShare,
+    getSettlement,
     paidDebts,
     debtPayments,
     addDebt,

@@ -3,7 +3,8 @@
  * (snake_case). Todas as tabelas têm RLS: cada usuário só enxerga as próprias linhas.
  */
 import { supabase } from '@/lib/supabase';
-import type { DebtPayment, Goal, GoalContribution, Subscription } from './engine';
+import type { DebtPayment, DebtShare, Goal, GoalContribution, Subscription } from './engine';
+import type { Split } from './credit-card';
 import type { DebtAchievement } from './achievements';
 
 // Tipos do app (mantidos soltos aqui para não criar dependência circular com o contexto)
@@ -21,6 +22,8 @@ export interface TransactionRecord {
   firstInstallment?: number;
   firstInvoiceMonth?: string;
   tags?: string[];
+  /** Divisão entre perfis; vazio = tudo de quem lançou */
+  splits?: Split[];
 }
 
 export interface InvoiceRecord {
@@ -78,6 +81,7 @@ const toTransaction = (r: any): TransactionRecord => ({
   firstInstallment: r.first_installment ?? 1,
   firstInvoiceMonth: r.first_invoice_month ?? undefined,
   tags: r.tags ?? [],
+  splits: [],
 });
 
 const fromTransaction = (userId: string, t: TransactionRecord) => ({
@@ -142,6 +146,15 @@ const toDebtPayment = (r: any): DebtPayment => ({
   amount: num(r.amount),
   installments: r.installments,
   kind: r.kind,
+  installmentNumber: r.installment_number ?? undefined,
+});
+
+const toDebtShare = (r: any): DebtShare => ({
+  id: r.id,
+  debtId: r.debt_id,
+  profile_id: r.profile_id,
+  shareAmount: num(r.share_amount),
+  installmentsPaid: r.installments_paid ?? 0,
 });
 
 const toCard = (r: any) => ({
@@ -183,6 +196,7 @@ const toSubscription = (r: any): Subscription => ({
   icon: r.icon,
   status: r.status,
   periods: (r.periods ?? []).map((p: any) => ({ start: p.start, ...(p.end ? { end: p.end } : {}) })),
+  splits: (r.splits ?? []).map((s: any) => ({ profile_id: s.profile_id, amount: num(s.amount) })),
 });
 
 const fromSubscription = (userId: string, s: Subscription) => ({
@@ -200,6 +214,7 @@ const fromSubscription = (userId: string, s: Subscription) => ({
   icon: s.icon,
   status: s.status,
   periods: s.periods.map(p => ({ start: p.start, end: p.end ?? null })),
+  splits: s.splits ?? [],
 });
 
 const toGoal = (r: any, contributions: GoalContribution[]): Goal => ({
@@ -269,6 +284,7 @@ export interface RemoteData {
   transactions: TransactionRecord[];
   debts: any[];
   debtPayments: DebtPayment[];
+  debtShares: DebtShare[];
   cards: any[];
   subscriptions: Subscription[];
   goals: Goal[];
@@ -278,11 +294,13 @@ export interface RemoteData {
 }
 
 export async function loadAll(): Promise<RemoteData> {
-  const [transactions, debts, debtPayments, cards, subscriptions, goals, contributions, invoices, categories, achievements] =
+  const [transactions, splits, debts, debtPayments, debtShares, cards, subscriptions, goals, contributions, invoices, categories, achievements] =
     await Promise.all([
       run('transações', supabase.from('transactions').select('*').order('date', { ascending: false })),
+      run('divisões', supabase.from('transaction_splits').select('*')),
       run('dívidas', supabase.from('debts').select('*').order('next_due_date')),
       run('pagamentos de dívidas', supabase.from('debt_payments').select('*').order('date')),
+      run('divisão de dívidas', supabase.from('debt_shares').select('*')),
       run('cartões', supabase.from('cards').select('*').order('created_at')),
       run('assinaturas', supabase.from('subscriptions').select('*').order('created_at')),
       run('metas', supabase.from('goals').select('*').order('created_at')),
@@ -299,10 +317,18 @@ export async function loadAll(): Promise<RemoteData> {
     contributionsByGoal.set(c.goal_id, list);
   });
 
+  const splitsByTransaction = new Map<string, Split[]>();
+  (splits as any[]).forEach(s => {
+    const list = splitsByTransaction.get(s.transaction_id) ?? [];
+    list.push({ profile_id: s.profile_id, amount: num(s.amount) });
+    splitsByTransaction.set(s.transaction_id, list);
+  });
+
   return {
-    transactions: (transactions as any[]).map(toTransaction),
+    transactions: (transactions as any[]).map(r => ({ ...toTransaction(r), splits: splitsByTransaction.get(r.id) ?? [] })),
     debts: (debts as any[]).map(toDebt),
     debtPayments: (debtPayments as any[]).map(toDebtPayment),
+    debtShares: (debtShares as any[]).map(toDebtShare),
     cards: (cards as any[]).map(toCard),
     subscriptions: (subscriptions as any[]).map(toSubscription),
     goals: (goals as any[]).map(g => toGoal(g, contributionsByGoal.get(g.id) ?? [])),
@@ -322,6 +348,17 @@ export const repo = {
   updateTransactionsCategory: (from: string, to: string) =>
     run('renomear categoria nas transações', supabase.from('transactions').update({ category: to }).eq('category', from)),
   deleteTransaction: (id: string) => run('excluir transação', supabase.from('transactions').delete().eq('id', id)),
+  /** Regrava a divisão da transação (apaga a anterior e insere a nova) */
+  saveTransactionSplits: async (userId: string, transactionId: string, profileId: string | undefined, splits: Split[]) => {
+    await run('limpar divisão', supabase.from('transaction_splits').delete().eq('transaction_id', transactionId));
+    if (splits.length === 0) return null;
+    return run(
+      'salvar divisão',
+      supabase.from('transaction_splits').insert(
+        splits.map(s => ({ user_id: userId, transaction_id: transactionId, profile_id: s.profile_id, amount: s.amount }))
+      )
+    );
+  },
 
   upsertDebt: (userId: string, d: any) => run('salvar dívida', supabase.from('debts').upsert(fromDebt(userId, d))),
   deleteDebt: (id: string) => run('excluir dívida', supabase.from('debts').delete().eq('id', id)),
@@ -337,8 +374,27 @@ export const repo = {
         amount: payment.amount,
         installments: payment.installments,
         kind: payment.kind,
+        installment_number: payment.installmentNumber ?? null,
       })
     ),
+  upsertDebtShare: (userId: string, share: DebtShare) =>
+    run(
+      'salvar divisão da dívida',
+      supabase.from('debt_shares').upsert(
+        {
+          id: share.id,
+          user_id: userId,
+          debt_id: share.debtId,
+          profile_id: share.profile_id,
+          share_amount: share.shareAmount,
+          installments_paid: share.installmentsPaid,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'debt_id,profile_id' }
+      )
+    ),
+  deleteDebtShares: (debtId: string) =>
+    run('excluir divisão da dívida', supabase.from('debt_shares').delete().eq('debt_id', debtId)),
 
   upsertCard: (userId: string, c: any) => run('salvar cartão', supabase.from('cards').upsert(fromCard(userId, c))),
   deleteCard: (id: string) => run('excluir cartão', supabase.from('cards').delete().eq('id', id)),

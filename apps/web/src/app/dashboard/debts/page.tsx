@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, TrendingDown, DollarSign, Calendar, AlertTriangle, CheckCircle, X, Sparkles, TrendingUp, Trophy } from 'lucide-react';
+import { Plus, TrendingDown, DollarSign, Calendar, AlertTriangle, CheckCircle, X, Sparkles, TrendingUp, Trophy, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -11,6 +11,10 @@ import { Input } from '@/components/ui/input';
 import { computeHealth, simulateDebtPayoff } from '@/lib/finance/health';
 import { useFinance } from '@/contexts/FinanceContext';
 import { useConfirm } from '@/providers/confirm-provider';
+import { useProfiles } from '@/providers/profile-provider';
+import { SplitEditor } from '@/components/forms/split-editor';
+import { installmentStatus } from '@/lib/finance/engine';
+import { splitsTotal, type Split } from '@/lib/finance/credit-card';
 
 interface Debt {
   id: string;
@@ -34,6 +38,8 @@ export default function DebtsPage() {
     paidDebts,
     debtPayments,
     addDebt,
+    debtShares,
+    payDebtShare,
     deleteDebt,
     payDebtInstallment,
     advanceDebtInstallments,
@@ -68,6 +74,16 @@ export default function DebtsPage() {
       // storage indisponível
     }
   };
+
+  const { profiles } = useProfiles();
+
+  // Divisão da parcela entre perfis (vazio = dívida de um perfil só)
+  const [debtSplits, setDebtSplits] = useState<Split[]>([]);
+  const [splitsValid, setSplitsValid] = useState(true);
+  const handleSplitChange = useCallback((next: Split[], valid: boolean) => {
+    setDebtSplits(next);
+    setSplitsValid(valid);
+  }, []);
 
   const [debtForm, setDebtForm] = useState({
     name: '',
@@ -131,6 +147,27 @@ export default function DebtsPage() {
     }, 5000);
   };
 
+  /** Partes de cada perfil nesta dívida (vazio = dívida de um perfil só) */
+  const sharesOf = (debtId: string) => debtShares.filter(s => s.debtId === debtId)
+  const profileName = (id: string) => profiles.find(p => p.id === id)?.name ?? ''
+
+  const handlePayShare = (debt: Debt, profileId: string) => {
+    const shares = sharesOf(debt.id)
+    const status = installmentStatus(debt, shares)
+    const share = shares.find(s => s.profile_id === profileId)
+    const last = status.pending.length === 1 && status.pending[0].profile_id === profileId
+    payDebtShare(debt.id, profileId)
+    setPaidMessage(
+      last
+        ? `✅ Parcela ${status.installment} de "${debt.name}" quitada: todos pagaram a parte deles.`
+        : `✅ Parte de ${profileName(profileId)} paga (${brl(share?.shareAmount ?? 0)}). Falta ${status.pending
+            .filter(s => s.profile_id !== profileId)
+            .map(s => profileName(s.profile_id))
+            .join(', ')}.`
+    )
+    setTimeout(() => setPaidMessage(null), 5000)
+  }
+
   const handleAddDebt = () => {
     if (!debtFormValid) return;
 
@@ -154,10 +191,12 @@ export default function DebtsPage() {
       totalInstallments,
       nextDueDate: debtForm.nextDueDate,
       creditor: debtForm.creditor || 'Não informado',
-      color: randomColor
+      color: randomColor,
+      splits: debtSplits,
     };
 
     addDebt(newDebt);
+    setDebtSplits([]);
     setDebtForm({ name: '', type: 'loan', totalAmount: '', interestRate: '', totalInstallments: '', installmentsPaid: '', nextDueDate: '', creditor: '' });
     setShowAddModal(false);
   };
@@ -177,6 +216,8 @@ export default function DebtsPage() {
   })();
   const brl = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   const debtFormValid =
+    splitsValid &&
+    (debtSplits.length === 0 || Math.abs(splitsTotal(debtSplits) - formPlan.monthlyPayment) < 0.005) &&
     !!debtForm.name.trim() &&
     formAmount > 0 &&
     formInstallments >= 1 &&
@@ -362,6 +403,13 @@ export default function DebtsPage() {
                     onChange={(e) => setDebtForm({ ...debtForm, creditor: e.target.value })}
                   />
                 </div>
+
+                <SplitEditor
+                  total={formPlan.monthlyPayment}
+                  onChange={handleSplitChange}
+                  title="Dividir a parcela entre perfis"
+                  hint="Cada um paga a sua parte; a parcela só é quitada quando todos pagarem."
+                />
 
                 {formAmount > 0 && formInstallments >= 1 && (
                   <div className="p-3 bg-muted rounded-lg space-y-1 text-sm">
@@ -622,6 +670,8 @@ export default function DebtsPage() {
             {debts.map((debt, index) => {
             const paidPercent = ((debt.totalAmount - debt.remainingAmount) / debt.totalAmount) * 100;
             const daysUntilDue = Math.ceil((new Date(debt.nextDueDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+            const shares = sharesOf(debt.id);
+            const status = installmentStatus(debt, shares);
             
             return (
               <motion.div
@@ -691,14 +741,48 @@ export default function DebtsPage() {
                     </Badge>
                   </div>
 
+                  {shares.length > 0 && (
+                    <div className="p-3 rounded-lg border space-y-2">
+                      <div className="flex items-center gap-2 text-sm font-medium">
+                        <Users className="w-4 h-4" />
+                        Parcela {status.installment} dividida
+                      </div>
+                      {shares.map(share => {
+                        const pago = share.installmentsPaid >= status.installment
+                        return (
+                          <div key={share.id} className="flex items-center justify-between gap-2 text-sm">
+                            <span className="truncate">{profileName(share.profile_id)}</span>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="font-medium">{brl(share.shareAmount)}</span>
+                              {pago ? (
+                                <Badge variant="success">pago</Badge>
+                              ) : (
+                                <Button size="sm" variant="outline" onClick={() => handlePayShare(debt, share.profile_id)}>
+                                  Pagar
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                      <p className="text-xs text-muted-foreground">
+                        {status.pendingAmount > 0
+                          ? `Faltam ${brl(status.pendingAmount)} para quitar esta parcela.`
+                          : 'Parcela quitada.'}
+                      </p>
+                    </div>
+                  )}
+
                   <div className="space-y-2">
-                    <Button
-                      variant="default"
-                      className="w-full"
-                      onClick={() => handlePayInstallment(debt)}
-                    >
-                      Pagar parcela ({new Date(`${debt.nextDueDate}T12:00:00`).toLocaleDateString('pt-BR')})
-                    </Button>
+                    {shares.length === 0 && (
+                      <Button
+                        variant="default"
+                        className="w-full"
+                        onClick={() => handlePayInstallment(debt)}
+                      >
+                        Pagar parcela ({new Date(`${debt.nextDueDate}T12:00:00`).toLocaleDateString('pt-BR')})
+                      </Button>
+                    )}
                     <Button
                       variant="default"
                       className="w-full bg-blue-600 hover:bg-blue-700"

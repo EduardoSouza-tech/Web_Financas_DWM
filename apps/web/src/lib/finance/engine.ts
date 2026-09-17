@@ -10,6 +10,7 @@ import {
   monthOfDate,
   type Installment,
   type MonthKey,
+  type Split,
 } from './credit-card';
 
 // ============================================
@@ -71,6 +72,8 @@ export interface Subscription {
   icon: string;
   status: 'active' | 'paused' | 'cancelled';
   periods: SubscriptionPeriod[];
+  /** Divisão entre perfis; vazio = assinatura inteira de quem cadastrou */
+  splits?: Split[];
 }
 
 export interface CashCharge {
@@ -81,6 +84,8 @@ export interface CashCharge {
   category: string;
   date: string;
   amount: number;
+  /** Divisão desta cobrança entre perfis */
+  splits?: Split[];
 }
 
 /** Datas de cobrança entre dois meses (inclusive), respeitando os períodos ativos */
@@ -120,6 +125,7 @@ export function expandSubscription(
         number: 1,
         total: 1,
         amount: sub.amount,
+        shares: sub.splits?.length ? sub.splits : undefined,
         invoiceMonth: invoiceMonthOf(date, closingDay),
         source: 'subscription' as const,
       })),
@@ -135,6 +141,7 @@ export function expandSubscription(
       category: sub.category,
       date,
       amount: sub.amount,
+      splits: sub.splits?.length ? sub.splits : undefined,
     })),
   };
 }
@@ -305,6 +312,43 @@ export interface DebtPayment {
   amount: number;
   installments: number; // parcelas cobertas por este pagamento
   kind: 'installment' | 'advance' | 'payoff';
+  /** Parcela que este pagamento cobriu (dívidas divididas fecham a parcela quando todos pagam) */
+  installmentNumber?: number;
+}
+
+/** Parte de um perfil numa dívida dividida */
+export interface DebtShare {
+  id: string;
+  debtId: string;
+  profile_id: string;
+  /** Quanto deste perfil em CADA parcela */
+  shareAmount: number;
+  /** Quantas parcelas este perfil já pagou */
+  installmentsPaid: number;
+}
+
+/**
+ * Situação da parcela atual de uma dívida dividida.
+ * A parcela só é quitada quando todas as partes forem pagas.
+ */
+export function installmentStatus(debt: DebtSchedule, shares: DebtShare[]) {
+  const current = (debt.installmentsPaid ?? 0) + 1;
+  const pending = shares.filter(s => s.installmentsPaid < current);
+  const paid = shares.filter(s => s.installmentsPaid >= current);
+  return {
+    installment: current,
+    pending,
+    paid,
+    settled: shares.length > 0 && pending.length === 0,
+    pendingAmount: Math.round(pending.reduce((s, x) => s + x.shareAmount, 0) * 100) / 100,
+  };
+}
+
+/** Esse perfil ainda deve a parcela atual? */
+export function profileOwesInstallment(debt: DebtSchedule, shares: DebtShare[], profileId: string): boolean {
+  const share = shares.find(s => s.profile_id === profileId);
+  if (!share) return false;
+  return share.installmentsPaid < (debt.installmentsPaid ?? 0) + 1;
 }
 
 export interface DebtSchedule {

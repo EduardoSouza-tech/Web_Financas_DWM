@@ -9,9 +9,11 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Input } from '@/components/ui/input';
 import { useFinance } from '@/contexts/FinanceContext';
+import { useConfirm } from '@/providers/confirm-provider';
 import { formatMonth } from '@/lib/finance/credit-card';
 
 export default function CardsPage() {
+  const confirm = useConfirm();
   const { cards, setCards, getInstallmentsForInvoice } = useFinance();
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -109,12 +111,17 @@ export default function CardsPage() {
     setShowInvoiceModal(true);
   };
 
-  const handleDeleteCard = (cardId: string) => {
+  const handleDeleteCard = async (cardId: string) => {
     const card = cards.find(c => c.id === cardId);
     if (!card) return;
 
-    const confirmMessage = `Tem certeza que deseja excluir o cartão "${card.name}"?\n\nIsso não excluirá as transações já registradas.`;
-    if (confirm(confirmMessage)) {
+    const ok = await confirm({
+      title: `Excluir o cartão "${card.name}"?`,
+      message: 'As compras já lançadas nele não são excluídas e continuam contando nas despesas.',
+      confirmLabel: 'Excluir cartão',
+      destructive: true,
+    });
+    if (ok) {
       setCards(cards.filter(c => c.id !== cardId));
     }
   };

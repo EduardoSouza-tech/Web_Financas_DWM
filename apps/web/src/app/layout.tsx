@@ -3,6 +3,7 @@ import { Inter } from 'next/font/google';
 import { AuthProvider } from '@/providers/auth-provider';
 import { ThemeProvider } from '@/providers/theme-provider';
 import { ProfileProvider } from '@/providers/profile-provider';
+import { ConfirmProvider } from '@/providers/confirm-provider';
 import '@/styles/globals.css';
 
 const inter = Inter({ subsets: ['latin'] });
@@ -26,7 +27,7 @@ export default function RootLayout({
         <ThemeProvider>
           <AuthProvider>
             <ProfileProvider>
-              {children}
+              <ConfirmProvider>{children}</ConfirmProvider>
             </ProfileProvider>
           </AuthProvider>
         </ThemeProvider>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -28,16 +28,16 @@ import CashflowChart from '@/components/charts/cashflow-chart';
 import CategoryChart from '@/components/charts/category-chart';
 import BudgetChart from '@/components/charts/budget-chart';
 import { useFinance } from '@/contexts/FinanceContext';
+import { useConfirm } from '@/providers/confirm-provider';
 import { MonthPicker } from '@/components/month-picker';
 import { computeHealth, generateInsights } from '@/lib/finance/health';
 import { generateAlerts } from '@/lib/finance/alerts';
 import { addMonths, currentMonthKey, formatMonth } from '@/lib/finance/credit-card';
 import { goalCurrentAmount, goalMonthlyNeeded, goalPercentage, nextSubscriptionCharge, todayISO } from '@/lib/finance/engine';
-import { clearAchievements, loadAchievements, type DebtAchievement } from '@/lib/finance/achievements';
-import { useProfiles } from '@/providers/profile-provider';
 import { Button } from '@/components/ui/button';
 
 export default function DashboardPage() {
+  const confirm = useConfirm();
   const {
     getTotalExpenses,
     getTotalIncome,
@@ -54,9 +54,9 @@ export default function DashboardPage() {
     subscriptions,
     referenceMonth,
     setReferenceMonth,
+    achievements,
+    clearAchievements,
   } = useFinance();
-  const { activeProfileId, isFamilyView } = useProfiles();
-  const [achievements, setAchievements] = useState<DebtAchievement[]>([]);
   const [incomeBoost, setIncomeBoost] = useState(0);
   const [expenseReduction, setExpenseReduction] = useState(0);
   
@@ -113,17 +113,14 @@ export default function DashboardPage() {
     .slice(0, 3);
 
   // Conquistas (dívidas quitadas) do perfil ativo; na visão Família, de todos
-  const isVisibleAchievement = (a: DebtAchievement) => isFamilyView || a.profile_id === activeProfileId;
-  useEffect(() => {
-    setAchievements(loadAchievements().filter(isVisibleAchievement));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeProfileId, isFamilyView]);
-
-  const handleClearAchievements = () => {
-    if (confirm('Excluir as conquistas financeiras deste perfil? Isso não pode ser desfeito.')) {
-      clearAchievements(isVisibleAchievement);
-      setAchievements([]);
-    }
+  const handleClearAchievements = async () => {
+    const ok = await confirm({
+      title: 'Excluir as conquistas deste perfil?',
+      message: 'Isso não pode ser desfeito.',
+      confirmLabel: 'Excluir',
+      destructive: true,
+    });
+    if (ok) clearAchievements();
   };
 
   // Próximos 7 dias, a partir dos dados reais do perfil (dívidas e cartões)

@@ -5,6 +5,7 @@ import { useFinance } from '@/contexts/FinanceContext';
 import { useUserProfile } from '@/hooks/useUserProfile';
 import { useAuth } from '@/providers/auth-provider';
 import { useProfiles } from '@/providers/profile-provider';
+import { useConfirm } from '@/providers/confirm-provider';
 import { formatCurrency } from '@/lib/utils';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -29,6 +30,7 @@ import {
 } from 'lucide-react';
 
 export default function SettingsPage() {
+  const confirm = useConfirm();
   const { user } = useAuth();
   const { profile, loading: profileLoading, updateProfile } = useUserProfile();
   const { categories, addCategory, updateCategory, deleteCategory, countTransactionsInCategory } = useFinance();
@@ -133,13 +135,16 @@ export default function SettingsPage() {
     setEditValues({ name: '', budgetLimit: 0 });
   };
 
-  const handleDeleteCategory = (id: string) => {
+  const handleDeleteCategory = async (id: string) => {
     const category = categories.find(c => c.id === id);
     const used = category ? countTransactionsInCategory(category.name) : 0;
-    const message = used > 0
-      ? `A categoria "${category?.name}" tem ${used} transação(ões). Ao excluir, elas passam para "Outros". Continuar?`
-      : 'Tem certeza que deseja excluir esta categoria?';
-    if (confirm(message)) {
+    const ok = await confirm({
+      title: `Excluir a categoria "${category?.name}"?`,
+      message: used > 0 ? `Ela tem ${used} lançamento(s), que passam para "Outros".` : undefined,
+      confirmLabel: 'Excluir',
+      destructive: true,
+    });
+    if (ok) {
       deleteCategory(id);
     }
   };

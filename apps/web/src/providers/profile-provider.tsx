@@ -147,7 +147,8 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [user, authLoading, useRemote]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, authLoading, useRemote]);
 
   const selectProfile = useCallback(
     (id: string) => {

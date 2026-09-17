@@ -21,6 +21,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { formatCurrency } from '@/lib/utils'
 import GoalForm from '@/components/forms/goal-form'
+import { useConfirm } from '@/providers/confirm-provider'
 import { useFinance } from '@/contexts/FinanceContext'
 import {
   goalContributionsInMonth,
@@ -33,6 +34,7 @@ import {
 import { formatDateBR, formatMonth } from '@/lib/finance/credit-card'
 
 export default function GoalsPage() {
+  const confirm = useConfirm()
   const { goals, saveGoal, setGoalStatus, deleteGoal, addGoalContribution, referenceMonth, getHealth } = useFinance()
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState<Goal | null>(null)
@@ -74,8 +76,14 @@ export default function GoalsPage() {
     setContributionAmount('')
   }
 
-  const handleDelete = (goal: Goal) => {
-    if (confirm(`Excluir a meta "${goal.name}"? O histórico de aportes também será apagado.`)) deleteGoal(goal.id)
+  const handleDelete = async (goal: Goal) => {
+    const ok = await confirm({
+      title: `Excluir a meta "${goal.name}"?`,
+      message: 'O histórico de aportes também será apagado.',
+      confirmLabel: 'Excluir meta',
+      destructive: true,
+    })
+    if (ok) deleteGoal(goal.id)
   }
 
   return (

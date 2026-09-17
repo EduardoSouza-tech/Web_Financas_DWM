@@ -8,7 +8,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Input } from '@/components/ui/input';
-import { addAchievement } from '@/lib/finance/achievements';
 import { computeHealth, simulateDebtPayoff } from '@/lib/finance/health';
 import { useFinance } from '@/contexts/FinanceContext';
 
@@ -73,7 +72,7 @@ const mockDebts: Debt[] = [
 ];
 
 export default function DebtsPage() {
-  const { debts, setDebts, getTotalIncome, getTotalExpenses, getTotalDebtPayments } = useFinance();
+  const { debts, setDebts, getTotalIncome, getTotalExpenses, getTotalDebtPayments, addAchievement } = useFinance();
   const health = computeHealth(getTotalIncome(), getTotalExpenses(), getTotalDebtPayments());
   const [paidMessage, setPaidMessage] = useState<string | null>(null);
   const [selectedDebt, setSelectedDebt] = useState<Debt | null>(null);

@@ -5,6 +5,7 @@ import { useTheme } from '@/providers/theme-provider';
 import { useProfiles } from '@/providers/profile-provider';
 import { ProfileSwitcher } from '@/components/profiles/profile-switcher';
 import { FinanceProvider } from '@/contexts/FinanceContext';
+import { SyncGate } from '@/components/sync-status';
 import { Button } from '@/components/ui/button';
 import { 
   LayoutDashboard, 
@@ -242,7 +243,7 @@ export default function DashboardLayout({
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3 }}
             >
-              {children}
+              <SyncGate>{children}</SyncGate>
             </motion.div>
           </FinanceProvider>
         </main>

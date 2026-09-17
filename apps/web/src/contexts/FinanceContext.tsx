@@ -1,8 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, ReactNode, useEffect, useMemo, useCallback } from 'react';
-import { useTransactions } from '@/hooks/useTransactions';
-import { useDebts, type Debt as DbDebt } from '@/hooks/useDebts';
+import React, { createContext, useContext, useState, ReactNode, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useAuth } from '@/providers/auth-provider';
 import { useProfiles } from '@/providers/profile-provider';
 import { isSupabaseConfigured } from '@/lib/supabase';
@@ -31,6 +29,13 @@ import {
 } from '@/lib/finance/engine';
 import { computeHealth, type FinancialHealth } from '@/lib/finance/health';
 import { seedCards, seedDebts, seedGoals, seedSubscriptions, seedTransactions } from '@/lib/finance/seed';
+import { isUuid, loadAll, newUuid, repo } from '@/lib/finance/repository';
+import {
+  addAchievement as addLocalAchievement,
+  clearAchievements as clearLocalAchievements,
+  loadAchievements as loadLocalAchievements,
+  type DebtAchievement,
+} from '@/lib/finance/achievements';
 
 export interface Category {
   id: string;
@@ -83,7 +88,35 @@ export const invoiceKey = (profileId: string | undefined, cardId: string, month:
 export const isCardTransaction = (tx: Pick<Transaction, 'type' | 'paymentMethod' | 'cardId'>) =>
   tx.type === 'expense' && (tx.paymentMethod === 'credit_card' || (!tx.paymentMethod && !!tx.cardId));
 
+export type SyncState = 'offline' | 'loading' | 'ready' | 'error';
+
+const DEFAULT_CATEGORIES: Array<Omit<Category, 'id'>> = [
+  { name: 'Alimentação', icon: '🍔', type: 'expense', budgetLimit: 1500 },
+  { name: 'Moradia', icon: '🏠', type: 'expense', budgetLimit: 2500 },
+  { name: 'Transporte', icon: '🚗', type: 'expense', budgetLimit: 800 },
+  { name: 'Saúde', icon: '🏥', type: 'expense', budgetLimit: 500 },
+  { name: 'Lazer', icon: '🎬', type: 'expense', budgetLimit: 600 },
+  { name: 'Educação', icon: '📚', type: 'expense', budgetLimit: 300 },
+  { name: 'Trabalho', icon: '💼', type: 'expense', budgetLimit: 150 },
+  { name: 'Outros', icon: '📁', type: 'expense' },
+  { name: 'Salário', icon: '💰', type: 'income' },
+  { name: 'Renda Extra', icon: '💵', type: 'income' },
+  { name: 'Freelance', icon: '💻', type: 'income' },
+  { name: 'Investimentos', icon: '📈', type: 'income' },
+];
+
 interface FinanceContextType {
+  /** 'offline' = só no navegador; 'loading'/'ready'/'error' = dados no Supabase */
+  syncState: SyncState;
+  /** Última falha ao ler ou gravar no banco (null se está tudo salvo) */
+  syncError: string | null;
+  dismissSyncError: () => void;
+  reload: () => void;
+
+  achievements: DebtAchievement[];
+  addAchievement: (debt: any, amountPaid?: number) => void;
+  clearAchievements: () => void;
+
   /** Mês usado em todas as análises (receitas, despesas, saldo) */
   referenceMonth: MonthKey;
   setReferenceMonth: (month: MonthKey) => void;
@@ -145,32 +178,12 @@ interface FinanceContextType {
 
 const FinanceContext = createContext<FinanceContextType | undefined>(undefined);
 
-// As páginas usam camelCase; o banco usa snake_case
-function fromDbDebt(debt: DbDebt) {
-  return {
-    id: debt.id,
-    profile_id: debt.profile_id,
-    name: debt.name,
-    type: debt.type,
-    totalAmount: Number(debt.total_amount),
-    remainingAmount: Number(debt.remaining_amount),
-    monthlyPayment: Number(debt.monthly_payment),
-    interestRate: Number(debt.interest_rate),
-    installmentsPaid: debt.installments_paid,
-    totalInstallments: debt.total_installments,
-    nextDueDate: debt.next_due_date,
-    creditor: debt.creditor,
-    color: debt.color,
-  };
-}
-
-const newId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+// IDs no formato do banco (UUID) também no modo offline
+const newId = (_prefix?: string) => newUuid();
 
 export function FinanceProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const { profiles, activeProfileId, activeProfile, isFamilyView } = useProfiles();
-  const { transactions: supabaseTransactions } = useTransactions();
-  const { debts: supabaseDebts } = useDebts();
 
   const remote = isSupabaseConfigured && !!user && user.id !== 'offline-user';
   const firstProfileId = profiles[0]?.id;
@@ -184,42 +197,119 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const [allSubscriptions, setAllSubscriptions] = useState<Subscription[]>([]);
   const [allGoals, setAllGoals] = useState<Goal[]>([]);
 
-  // Exemplo no primeiro perfil. Cartões, assinaturas e metas ainda não têm tabela no banco.
+  const [categories, setCategories] = useState<Category[]>(() => DEFAULT_CATEGORIES.map(c => ({ ...c, id: newId() })));
+  const [invoices, setInvoices] = useState<Record<string, InvoiceState>>({});
+  const [achievements, setAchievements] = useState<DebtAchievement[]>([]);
+  const [syncState, setSyncState] = useState<SyncState>(remote ? 'loading' : 'offline');
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
+
+  // Grava no banco em segundo plano; a tela já foi atualizada. Falha vira aviso para o usuário.
+  const persist = useCallback(
+    (action: () => Promise<unknown>) => {
+      if (!remote || !user) return;
+      action().catch((err: Error) => {
+        console.error('Erro ao salvar no Supabase:', err);
+        setSyncError(err.message);
+      });
+    },
+    [remote, user]
+  );
+
+  // Modo offline: dados de exemplo no primeiro perfil (somem ao recarregar)
   useEffect(() => {
-    if (!firstProfileId) return;
+    if (remote || !firstProfileId) return;
     setAllCards(seedCards(firstProfileId));
-    if (!remote) {
-      setAllTransactions(seedTransactions(firstProfileId));
-      setAllDebts(seedDebts(firstProfileId));
-      setAllSubscriptions(seedSubscriptions(firstProfileId));
-      setAllGoals(seedGoals(firstProfileId));
-    }
+    setAllTransactions(seedTransactions(firstProfileId));
+    setAllDebts(seedDebts(firstProfileId));
+    setAllSubscriptions(seedSubscriptions(firstProfileId));
+    setAllGoals(seedGoals(firstProfileId));
+    setAchievements(loadLocalAchievements());
+    setSyncState('offline');
   }, [firstProfileId, remote]);
 
+  // Supabase: carrega tudo da conta (todos os perfis) ao entrar
   useEffect(() => {
-    if (remote) setAllTransactions(supabaseTransactions.map(tx => ({ ...tx, amount: Number(tx.amount) })));
-  }, [remote, supabaseTransactions]);
-
-  useEffect(() => {
-    if (remote) setAllDebts(supabaseDebts.map(fromDbDebt));
-  }, [remote, supabaseDebts]);
+    if (!remote || !user) return;
+    let cancelled = false;
+    setSyncState('loading');
+    loadAll()
+      .then(async data => {
+        if (cancelled) return;
+        setAllTransactions(data.transactions);
+        setAllDebts(data.debts);
+        setAllCards(data.cards);
+        setAllSubscriptions(data.subscriptions);
+        setAllGoals(data.goals);
+        setAchievements(data.achievements);
+        setInvoices(
+          Object.fromEntries(
+            data.invoices.map(inv => [
+              invoiceKey(inv.profile_id, inv.cardId, inv.month),
+              { checked: inv.checked, statementAmount: inv.statementAmount, paidAt: inv.paidAt },
+            ])
+          )
+        );
+        if (data.categories.length > 0) {
+          setCategories(data.categories);
+        } else {
+          // Primeira vez da conta: cria as categorias padrão no banco
+          const defaults = DEFAULT_CATEGORIES.map(c => ({ ...c, id: newId() }));
+          setCategories(defaults);
+          await repo.insertCategories(user.id, defaults);
+        }
+        if (!cancelled) setSyncState('ready');
+      })
+      .catch((err: Error) => {
+        if (cancelled) return;
+        console.error('Erro ao carregar do Supabase:', err);
+        setSyncError(err.message);
+        setSyncState('error');
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [remote, user?.id, reloadToken]);
 
   const inView = useCallback(
     (item: { profile_id?: string }) => isFamilyView || item.profile_id === activeProfileId,
     [isFamilyView, activeProfileId]
   );
 
-  // Setter que só substitui os itens visíveis no perfil atual, preservando os dos outros perfis.
+  // Setter que só substitui os itens visíveis no perfil atual, preservando os dos outros perfis,
+  // e grava no banco o que foi incluído, alterado ou removido.
   const scopedSetter = useCallback(
-    (setAll: React.Dispatch<React.SetStateAction<any[]>>) => (next: any[]) => {
-      const tagged = next.map(item => (item.profile_id ? item : { ...item, profile_id: targetProfileId }));
-      setAll(prev => [...prev.filter(item => !inView(item)), ...tagged]);
-    },
-    [inView, targetProfileId]
+    (
+      all: any[],
+      setAll: React.Dispatch<React.SetStateAction<any[]>>,
+      save: (userId: string, item: any) => Promise<unknown>,
+      remove: (id: string) => Promise<unknown>
+    ) =>
+      (next: any[]) => {
+        const tagged = next.map(item => ({
+          ...item,
+          // No banco o id é UUID; itens novos das telas chegam com ids como "card-123".
+          // No modo offline os ids de exemplo ('1', '2'...) são mantidos porque as compras apontam para eles.
+          id: item.id && (!remote || isUuid(item.id)) ? item.id : newId(),
+          profile_id: item.profile_id ?? targetProfileId,
+        }));
+        const before = new Map(all.filter(inView).map(item => [item.id, item]));
+        setAll(prev => [...prev.filter(item => !inView(item)), ...tagged]);
+
+        if (!user) return;
+        const nextIds = new Set(tagged.map(item => item.id));
+        tagged
+          .filter(item => JSON.stringify(item) !== JSON.stringify(before.get(item.id)))
+          .forEach(item => persist(() => save(user.id, item)));
+        before.forEach((_item, id) => {
+          if (!nextIds.has(id)) persist(() => remove(id));
+        });
+      },
+    [inView, targetProfileId, persist, user, remote]
   );
 
   const [referenceMonth, setReferenceMonth] = useState<MonthKey>(() => currentMonthKey());
-  const [invoices, setInvoices] = useState<Record<string, InvoiceState>>({});
 
   const transactions = useMemo(() => allTransactions.filter(inView), [allTransactions, inView]);
   const debts = useMemo(() => allDebts.filter(inView), [allDebts, inView]);
@@ -268,10 +358,34 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     [invoices]
   );
 
+  // Faturas alteradas ficam marcadas e são gravadas depois que o estado é atualizado
+  const dirtyInvoices = useRef(new Set<string>());
   const updateInvoice = (profileId: string | undefined, cardId: string, month: MonthKey, patch: (inv: InvoiceState) => InvoiceState) => {
     const key = invoiceKey(profileId, cardId, month);
+    dirtyInvoices.current.add(key);
     setInvoices(prev => ({ ...prev, [key]: patch(prev[key] ?? { checked: [] }) }));
   };
+
+  useEffect(() => {
+    if (!remote || !user || dirtyInvoices.current.size === 0) return;
+    const keys = Array.from(dirtyInvoices.current);
+    dirtyInvoices.current.clear();
+    keys.forEach(key => {
+      const inv = invoices[key];
+      const [profileId, cardId, month] = key.split('|');
+      if (!inv || !isUuid(cardId)) return;
+      persist(() =>
+        repo.upsertInvoice(user.id, {
+          profile_id: profileId,
+          cardId,
+          month,
+          checked: inv.checked,
+          statementAmount: inv.statementAmount,
+          paidAt: inv.paidAt,
+        })
+      );
+    });
+  }, [invoices, remote, user, persist]);
 
   const toggleInstallmentChecked = (inst: Installment) =>
     updateInvoice(inst.profile_id, inst.cardId, inst.invoiceMonth, inv => ({
@@ -321,108 +435,172 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   // Transações, dívidas, cartões
   // ============================================
   const addTransaction = (tx: Omit<Transaction, 'id' | 'profile_id'>) => {
-    setAllTransactions(prev => [{ ...tx, id: newId('tx'), profile_id: targetProfileId }, ...prev]);
+    const record = { ...tx, id: newId('tx'), profile_id: targetProfileId };
+    setAllTransactions(prev => [record, ...prev]);
+    persist(() => repo.upsertTransaction(user!.id, record));
   };
 
   const deleteTransaction = (id: string) => {
     setAllTransactions(prev => prev.filter(tx => tx.id !== id));
+    persist(() => repo.deleteTransaction(id));
   };
 
-  const setTransactions = useMemo(() => scopedSetter(setAllTransactions), [scopedSetter]);
-  const setDebts = useMemo(() => scopedSetter(setAllDebts), [scopedSetter]);
-  const setCards = useMemo(() => scopedSetter(setAllCards), [scopedSetter]);
+  const setTransactions = scopedSetter(allTransactions, setAllTransactions, repo.upsertTransaction, repo.deleteTransaction);
+  const setDebts = scopedSetter(allDebts, setAllDebts, repo.upsertDebt, repo.deleteDebt);
+  const setCards = scopedSetter(allCards, setAllCards, repo.upsertCard, repo.deleteCard);
 
   // ============================================
   // Assinaturas
   // ============================================
+  const replaceSubscription = (next: Subscription) => {
+    setAllSubscriptions(prev => prev.map(s => (s.id === next.id ? next : s)));
+    persist(() => repo.upsertSubscription(user!.id, next));
+  };
+
   const saveSubscription: FinanceContextType['saveSubscription'] = input => {
     if (input.id) {
-      setAllSubscriptions(prev => prev.map(s => (s.id === input.id ? { ...s, ...input, id: s.id } : s)));
+      const current = allSubscriptions.find(s => s.id === input.id);
+      if (current) replaceSubscription({ ...current, ...input, id: current.id });
       return;
     }
     const { id: _ignored, ...data } = input;
-    setAllSubscriptions(prev => [
-      ...prev,
-      { ...data, id: newId('sub'), profile_id: targetProfileId, status: 'active', periods: [{ start: todayISO() }] },
-    ]);
+    const created: Subscription = {
+      ...data,
+      id: newId('sub'),
+      profile_id: targetProfileId,
+      status: 'active',
+      periods: [{ start: todayISO() }],
+    };
+    setAllSubscriptions(prev => [...prev, created]);
+    persist(() => repo.upsertSubscription(user!.id, created));
   };
 
-  const setSubscriptionStatus = (id: string, status: Subscription['status']) =>
-    setAllSubscriptions(prev => prev.map(s => (s.id === id ? withSubscriptionStatus(s, status) : s)));
+  const setSubscriptionStatus = (id: string, status: Subscription['status']) => {
+    const current = allSubscriptions.find(s => s.id === id);
+    if (current) replaceSubscription(withSubscriptionStatus(current, status));
+  };
 
-  const deleteSubscription = (id: string) => setAllSubscriptions(prev => prev.filter(s => s.id !== id));
+  const deleteSubscription = (id: string) => {
+    setAllSubscriptions(prev => prev.filter(s => s.id !== id));
+    persist(() => repo.deleteSubscription(id));
+  };
 
   // ============================================
   // Metas
   // ============================================
+  const replaceGoal = (next: Goal) => {
+    setAllGoals(prev => prev.map(g => (g.id === next.id ? next : g)));
+    persist(() => repo.upsertGoal(user!.id, next));
+  };
+
   const saveGoal: FinanceContextType['saveGoal'] = input => {
     if (input.id) {
-      setAllGoals(prev => prev.map(g => (g.id === input.id ? { ...g, ...input, id: g.id } : g)));
+      const current = allGoals.find(g => g.id === input.id);
+      if (current) replaceGoal({ ...current, ...input, id: current.id });
       return;
     }
     const { id: _ignored, ...data } = input;
-    setAllGoals(prev => [
-      ...prev,
-      { ...data, id: newId('goal'), profile_id: targetProfileId, status: 'active', createdAt: todayISO(), contributions: [] },
-    ]);
+    const created: Goal = {
+      ...data,
+      id: newId('goal'),
+      profile_id: targetProfileId,
+      status: 'active',
+      createdAt: todayISO(),
+      contributions: [],
+    };
+    setAllGoals(prev => [...prev, created]);
+    persist(() => repo.upsertGoal(user!.id, created));
   };
 
-  const setGoalStatus = (id: string, status: Goal['status']) =>
-    setAllGoals(prev => prev.map(g => (g.id === id ? { ...g, status } : g)));
+  const setGoalStatus = (id: string, status: Goal['status']) => {
+    const current = allGoals.find(g => g.id === id);
+    if (current) replaceGoal({ ...current, status });
+  };
 
-  const deleteGoal = (id: string) => setAllGoals(prev => prev.filter(g => g.id !== id));
+  const deleteGoal = (id: string) => {
+    setAllGoals(prev => prev.filter(g => g.id !== id));
+    persist(() => repo.deleteGoal(id));
+  };
 
-  const addGoalContribution = (goalId: string, amount: number, date = todayISO()) =>
-    setAllGoals(prev =>
-      prev.map(g => (g.id === goalId ? { ...g, contributions: [...g.contributions, { id: newId('c'), date, amount }] } : g))
-    );
+  const addGoalContribution = (goalId: string, amount: number, date = todayISO()) => {
+    const goal = allGoals.find(g => g.id === goalId);
+    if (!goal) return;
+    const contribution = { id: newId('c'), date, amount };
+    setAllGoals(prev => prev.map(g => (g.id === goalId ? { ...g, contributions: [...g.contributions, contribution] } : g)));
+    persist(() => repo.insertContribution(user!.id, goal, contribution));
+  };
+
+  // ============================================
+  // Conquistas (dívidas quitadas)
+  // ============================================
+  const addAchievement = (debt: any, amountPaid = debt.remainingAmount) => {
+    if (!remote) {
+      setAchievements(addLocalAchievement(debt, amountPaid));
+      return;
+    }
+    if (achievements.some(a => a.debtId === debt.id && a.profile_id === debt.profile_id) || !isUuid(debt.id)) return;
+    const achievement: DebtAchievement = {
+      id: newId(),
+      profile_id: debt.profile_id,
+      debtId: debt.id,
+      debtName: debt.name,
+      amount: amountPaid,
+      paidAt: new Date().toISOString(),
+      monthlyPaymentFreed: debt.monthlyPayment,
+      interestRate: debt.interestRate,
+    };
+    setAchievements(prev => [...prev, achievement]);
+    persist(() => repo.insertAchievement(user!.id, achievement));
+  };
+
+  const clearAchievements = () => {
+    if (!remote) {
+      setAchievements(clearLocalAchievements(inView));
+      return;
+    }
+    const ids = achievements.filter(inView).map(a => a.id);
+    setAchievements(prev => prev.filter(a => !inView(a)));
+    if (ids.length) persist(() => repo.deleteAchievements(ids));
+  };
 
   // ============================================
   // Categorias (compartilhadas entre os perfis; o limite é o orçamento mensal)
   // ============================================
-  const [categories, setCategories] = useState<Category[]>([
-    { id: '1', name: 'Alimentação', icon: '🍔', type: 'expense', budgetLimit: 1500 },
-    { id: '2', name: 'Moradia', icon: '🏠', type: 'expense', budgetLimit: 2500 },
-    { id: '3', name: 'Transporte', icon: '🚗', type: 'expense', budgetLimit: 800 },
-    { id: '4', name: 'Saúde', icon: '🏥', type: 'expense', budgetLimit: 500 },
-    { id: '5', name: 'Lazer', icon: '🎬', type: 'expense', budgetLimit: 600 },
-    { id: '6', name: 'Educação', icon: '📚', type: 'expense', budgetLimit: 300 },
-    { id: '7', name: 'Trabalho', icon: '💼', type: 'expense', budgetLimit: 150 },
-    { id: '8', name: 'Outros', icon: '📁', type: 'expense' },
-    { id: '9', name: 'Salário', icon: '💰', type: 'income' },
-    { id: '10', name: 'Renda Extra', icon: '💵', type: 'income' },
-    { id: '11', name: 'Freelance', icon: '💻', type: 'income' },
-    { id: '12', name: 'Investimentos', icon: '📈', type: 'income' },
-  ]);
-
   const addCategory = (category: Omit<Category, 'id'>) => {
-    setCategories(prev => [...prev, { ...category, id: Date.now().toString() }]);
+    const created = { ...category, id: newId() };
+    setCategories(prev => [...prev, created]);
+    persist(() => repo.upsertCategory(user!.id, created));
   };
 
   // Transações e assinaturas guardam o NOME da categoria: renomear/excluir precisa refletir nelas
   const renameCategoryUsages = (from: string, to: string) => {
     setAllTransactions(prev => prev.map(tx => (tx.category === from ? { ...tx, category: to } : tx)));
     setAllSubscriptions(prev => prev.map(s => (s.category === from ? { ...s, category: to } : s)));
+    persist(() => repo.updateTransactionsCategory(from, to));
+    persist(() => repo.updateSubscriptionsCategory(from, to));
   };
 
   const updateCategory = (id: string, updates: Partial<Category>) => {
     const current = categories.find(cat => cat.id === id);
+    if (!current) return;
     const newName = updates.name?.trim();
-    if (current && newName && newName !== current.name) renameCategoryUsages(current.name, newName);
-    setCategories(prev =>
-      prev.map(cat => (cat.id === id ? { ...cat, ...updates, ...(newName ? { name: newName } : {}) } : cat))
-    );
+    if (newName && newName !== current.name) renameCategoryUsages(current.name, newName);
+    const next = { ...current, ...updates, ...(newName ? { name: newName } : {}) };
+    setCategories(prev => prev.map(cat => (cat.id === id ? next : cat)));
+    persist(() => repo.upsertCategory(user!.id, next));
   };
 
   // O que estava na categoria excluída passa para "Outros"
   const deleteCategory = (id: string) => {
     const current = categories.find(cat => cat.id === id);
-    if (current) renameCategoryUsages(current.name, 'Outros');
-    setCategories(prev => {
-      const next = prev.filter(cat => cat.id !== id);
-      const needsOthers = current?.type === 'expense' && !next.some(c => c.name === 'Outros' && c.type === 'expense');
-      return needsOthers ? [...next, { id: Date.now().toString(), name: 'Outros', icon: '📁', type: 'expense' }] : next;
-    });
+    if (!current) return;
+    renameCategoryUsages(current.name, 'Outros');
+    const remaining = categories.filter(cat => cat.id !== id);
+    const needsOthers = current.type === 'expense' && !remaining.some(c => c.name === 'Outros' && c.type === 'expense');
+    const others: Category = { id: newId(), name: 'Outros', icon: '📁', type: 'expense' };
+    setCategories(needsOthers ? [...remaining, others] : remaining);
+    persist(() => repo.deleteCategory(id));
+    if (needsOthers) persist(() => repo.upsertCategory(user!.id, others));
   };
 
   const countTransactionsInCategory = (name: string) =>
@@ -561,6 +739,16 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const getRealSavingsRate = () => getHealth().realSavingsRate;
 
   const value: FinanceContextType = {
+    syncState,
+    syncError,
+    dismissSyncError: () => setSyncError(null),
+    reload: () => {
+      setSyncError(null);
+      setReloadToken(t => t + 1);
+    },
+    achievements: achievements.filter(inView),
+    addAchievement,
+    clearAchievements,
     referenceMonth,
     setReferenceMonth,
     transactions,

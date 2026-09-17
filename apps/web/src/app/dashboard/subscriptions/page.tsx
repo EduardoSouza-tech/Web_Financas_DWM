@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { useFinance } from '@/contexts/FinanceContext';
+import { useConfirm } from '@/providers/confirm-provider';
 import { formatCurrency, cn } from '@/lib/utils';
 import { formatDateBR, formatMonth } from '@/lib/finance/credit-card';
 import {
@@ -34,6 +35,7 @@ type FormState = {
 };
 
 export default function SubscriptionsPage() {
+  const confirm = useConfirm();
   const {
     subscriptions,
     saveSubscription,
@@ -103,13 +105,16 @@ export default function SubscriptionsPage() {
     setForm(null);
   };
 
-  const remove = (s: Subscription) => {
-    if (
-      confirm(
-        `Excluir "${s.name}" apaga também as cobranças passadas dela das análises e faturas.\n\nPara parar de cobrar mantendo o histórico, use "Cancelar". Excluir mesmo assim?`
-      )
-    )
-      deleteSubscription(s.id);
+  const remove = async (s: Subscription) => {
+    const ok = await confirm({
+      title: `Excluir "${s.name}"?`,
+      message:
+        'Apaga também as cobranças passadas dela das análises e faturas.\n\nPara parar de cobrar mantendo o histórico, use o botão "Cancelar" da assinatura.',
+      confirmLabel: 'Excluir',
+      cancelLabel: 'Voltar',
+      destructive: true,
+    });
+    if (ok) deleteSubscription(s.id);
   };
 
   const statusBadge = (s: Subscription) =>

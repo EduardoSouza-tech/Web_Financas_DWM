@@ -20,6 +20,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { formatCurrency } from '@/lib/utils'
 import TransactionForm from '@/components/forms/transaction-form'
+import { useConfirm } from '@/providers/confirm-provider'
 import { MonthPicker } from '@/components/month-picker'
 import { useFinance, isCardTransaction, type Transaction } from '@/contexts/FinanceContext'
 import { formatDateBR, formatMonth, monthOfDate, splitAmount } from '@/lib/finance/credit-card'
@@ -28,6 +29,7 @@ type TypeFilter = 'all' | 'income' | 'expense'
 type PaymentFilter = 'all' | 'cash' | 'credit_card'
 
 export default function TransactionsPage() {
+  const confirm = useConfirm()
   const {
     transactions,
     categories,
@@ -79,9 +81,15 @@ export default function TransactionsPage() {
   const invoiceTotal = invoiceInstallments.reduce((sum, i) => sum + i.amount, 0)
   const usedCategories = Array.from(new Set(monthTransactions.map(tx => tx.category))).sort()
 
-  const handleDelete = (tx: Transaction) => {
-    const extra = isCardTransaction(tx) && (tx.installments ?? 1) > 1 ? ` Todas as ${tx.installments} parcelas serão removidas.` : ''
-    if (confirm(`Excluir "${tx.description}"?${extra}`)) deleteTransaction(tx.id)
+  const handleDelete = async (tx: Transaction) => {
+    const parcelas = isCardTransaction(tx) && (tx.installments ?? 1) > 1
+    const ok = await confirm({
+      title: `Excluir "${tx.description}"?`,
+      message: parcelas ? `Todas as ${tx.installments} parcelas serão removidas das faturas.` : 'Esta ação não pode ser desfeita.',
+      confirmLabel: 'Excluir',
+      destructive: true,
+    })
+    if (ok) deleteTransaction(tx.id)
   }
 
   const filterButton = (active: boolean) => (active ? 'default' : 'outline') as 'default' | 'outline'

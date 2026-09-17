@@ -23,6 +23,11 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType>({} as AuthContextType);
 
+// O Supabase reenvia a sessão (ex.: ao voltar para a aba) com um objeto novo do mesmo usuário.
+// Manter o mesmo objeto evita que perfis e dados sejam recarregados à toa.
+const sameUser = (prev: User | null, next: User | null) =>
+  !!prev && !!next && prev.id === next.id && prev.updated_at === next.updated_at;
+
 const OFFLINE_USER_KEY = 'offline_user';
 
 function createOfflineUser(email: string, name: string): User {
@@ -89,14 +94,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     supabase.auth
       .getUser()
-      .then(({ data }) => setUser(data.user ?? null))
+      .then(({ data }) => setUser(prev => (sameUser(prev, data.user) ? prev : data.user ?? null)))
       .catch(() => setUser(null))
       .finally(() => setLoading(false));
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
+      const next = session?.user ?? null;
+      setUser(prev => (sameUser(prev, next) ? prev : next));
       setLoading(false);
     });
 

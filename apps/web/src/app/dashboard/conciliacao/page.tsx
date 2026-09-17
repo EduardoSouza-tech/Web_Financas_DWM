@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge'
 import { MonthPicker } from '@/components/month-picker'
 import { useFinance } from '@/contexts/FinanceContext'
 import { useProfiles } from '@/providers/profile-provider'
+import { useConfirm } from '@/providers/confirm-provider'
 import { formatCurrency, cn } from '@/lib/utils'
 import {
   DEFAULT_CLOSING_DAY,
@@ -23,6 +24,7 @@ import {
 const round2 = (n: number) => Math.round(n * 100) / 100
 
 export default function ConciliacaoPage() {
+  const confirm = useConfirm()
   const {
     cards,
     referenceMonth,
@@ -67,12 +69,20 @@ export default function ConciliacaoPage() {
   const checkAll = (items: Installment[], checked: string[]) =>
     items.filter(i => !checked.includes(i.key)).forEach(i => toggleInstallmentChecked(i))
 
-  const pay = (inv: (typeof invoices)[number]) => {
+  const pay = async (inv: (typeof invoices)[number]) => {
     const warnings = []
     if (inv.pending > 0) warnings.push(`${inv.pending} parcela(s) ainda não conferida(s)`)
     if (inv.difference !== undefined && inv.difference !== 0)
       warnings.push(`diferença de ${formatCurrency(inv.difference)} em relação ao valor do banco`)
-    if (warnings.length && !confirm(`A fatura tem ${warnings.join(' e ')}. Marcar como paga mesmo assim?`)) return
+    if (
+      warnings.length &&
+      !(await confirm({
+        title: 'Marcar fatura como paga?',
+        message: `A fatura tem ${warnings.join(' e ')}.`,
+        confirmLabel: 'Marcar como paga',
+      }))
+    )
+      return
     setInvoicePaid(inv.card.profile_id, inv.card.id, referenceMonth, true)
   }
 

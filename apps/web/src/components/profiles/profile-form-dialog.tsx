@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Check, Trash2, X } from 'lucide-react';
+import { Camera, Check, ImageOff, Loader2, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { PROFILE_COLORS, type Profile, type ProfileInput } from '@/providers/profile-provider';
 import { ProfileAvatar } from './profile-avatar';
+import { ImageError, prepareAvatar } from '@/lib/image-resize';
 
 const EMOJIS = ['😀', '😎', '🧑', '👩', '👨', '👧', '👦', '👵', '👴', '🐶', '🐱', '🦊', '🚀', '⭐'];
 
@@ -18,20 +19,28 @@ interface ProfileFormDialogProps {
   onClose: () => void;
   onSave: (input: ProfileInput) => Promise<void>;
   onDelete?: () => Promise<void>;
+  /** Erro vindo do salvamento (ex.: banco) */
+  error?: string | null;
 }
 
-export function ProfileFormDialog({ open, profile, canDelete, onClose, onSave, onDelete }: ProfileFormDialogProps) {
+export function ProfileFormDialog({ open, profile, canDelete, onClose, onSave, onDelete, error }: ProfileFormDialogProps) {
   const [name, setName] = useState('');
   const [color, setColor] = useState(PROFILE_COLORS[0]);
   const [emoji, setEmoji] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [image, setImage] = useState<string | null>(null);
+  const [processingImage, setProcessingImage] = useState(false);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
     setName(profile?.name ?? '');
     setColor(profile?.avatar_color ?? PROFILE_COLORS[Math.floor(Math.random() * PROFILE_COLORS.length)]);
     setEmoji(profile?.avatar_emoji ?? null);
+    setImage(profile?.avatar_image ?? null);
+    setImageError(null);
     setConfirmDelete(false);
   }, [open, profile]);
 
@@ -39,8 +48,23 @@ export function ProfileFormDialog({ open, profile, canDelete, onClose, onSave, o
     e.preventDefault();
     if (!name.trim()) return;
     setSaving(true);
-    await onSave({ name: name.trim(), avatar_color: color, avatar_emoji: emoji });
+    await onSave({ name: name.trim(), avatar_color: color, avatar_emoji: emoji, avatar_image: image });
     setSaving(false);
+  };
+
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // permite escolher o mesmo arquivo de novo
+    if (!file) return;
+    setImageError(null);
+    setProcessingImage(true);
+    try {
+      setImage(await prepareAvatar(file));
+    } catch (err) {
+      setImageError(err instanceof ImageError ? err.message : 'Não foi possível usar esta imagem.');
+    } finally {
+      setProcessingImage(false);
+    }
   };
 
   const handleDelete = async () => {
@@ -75,8 +99,39 @@ export function ProfileFormDialog({ open, profile, canDelete, onClose, onSave, o
               </Button>
             </div>
 
-            <div className="flex justify-center mb-6">
-              <ProfileAvatar profile={{ name: name || '?', avatar_color: color, avatar_emoji: emoji }} size="xl" />
+            <div className="flex flex-col items-center mb-6">
+              <button
+                type="button"
+                onClick={() => fileInput.current?.click()}
+                className="group relative rounded-2xl focus:outline-none focus-visible:ring-4 focus-visible:ring-primary/30"
+                aria-label={image ? 'Trocar foto' : 'Enviar foto'}
+              >
+                <ProfileAvatar profile={{ name: name || '?', avatar_color: color, avatar_emoji: emoji, avatar_image: image }} size="xl" />
+                <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 rounded-2xl bg-black/55 text-xs font-medium text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                  {processingImage ? <Loader2 className="h-6 w-6 animate-spin" /> : <Camera className="h-6 w-6" />}
+                  {image ? 'Trocar foto' : 'Enviar foto'}
+                </span>
+                {processingImage && (
+                  <span className="absolute inset-0 flex items-center justify-center rounded-2xl bg-black/55">
+                    <Loader2 className="h-6 w-6 animate-spin text-white" />
+                  </span>
+                )}
+              </button>
+              <input ref={fileInput} type="file" accept="image/*" className="hidden" onChange={handleFile} />
+
+              <div className="mt-3 flex gap-2">
+                <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => fileInput.current?.click()} disabled={processingImage}>
+                  <Camera className="h-4 w-4" />
+                  {image ? 'Trocar foto' : 'Enviar foto'}
+                </Button>
+                {image && (
+                  <Button type="button" variant="ghost" size="sm" className="gap-1.5 text-red-500 hover:text-red-600" onClick={() => setImage(null)}>
+                    <ImageOff className="h-4 w-4" />
+                    Remover foto
+                  </Button>
+                )}
+              </div>
+              {imageError && <p className="mt-2 text-center text-sm text-red-500">{imageError}</p>}
             </div>
 
             <label className="block text-sm font-medium mb-2" htmlFor="profile-name">
@@ -92,7 +147,9 @@ export function ProfileFormDialog({ open, profile, canDelete, onClose, onSave, o
               className="w-full h-11 rounded-xl border border-input bg-background px-4 mb-5 focus:outline-none focus:ring-2 focus:ring-ring"
             />
 
-            <p className="text-sm font-medium mb-2">Cor</p>
+            <p className="text-sm font-medium mb-2">
+              Cor{image && <span className="font-normal text-muted-foreground"> (usada quando não há foto)</span>}
+            </p>
             <div className="flex flex-wrap gap-2 mb-5">
               {PROFILE_COLORS.map(c => (
                 <button
@@ -135,6 +192,12 @@ export function ProfileFormDialog({ open, profile, canDelete, onClose, onSave, o
               ))}
             </div>
 
+            {error && !confirmDelete && (
+              <p className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-500">
+                Não foi possível salvar: {error}
+              </p>
+            )}
+
             {confirmDelete ? (
               <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 mb-4 text-sm">
                 <p className="mb-3">
@@ -168,7 +231,7 @@ export function ProfileFormDialog({ open, profile, canDelete, onClose, onSave, o
               <Button type="button" variant="outline" onClick={onClose}>
                 Cancelar
               </Button>
-              <Button type="submit" disabled={saving || !name.trim()}>
+              <Button type="submit" disabled={saving || processingImage || !name.trim()}>
                 Salvar
               </Button>
             </div>

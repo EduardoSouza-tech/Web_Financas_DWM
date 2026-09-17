@@ -23,12 +23,17 @@ export interface Profile {
   name: string;
   avatar_color: string;
   avatar_emoji: string | null;
+  /** Foto já reduzida (data URL); tem prioridade sobre cor/emoji */
+  avatar_image?: string | null;
   position: number;
   /** Renda mensal esperada do perfil (usada nas previsões) */
   expected_income?: number | null;
 }
 
-export type ProfileInput = Pick<Profile, 'name' | 'avatar_color' | 'avatar_emoji'> & { expected_income?: number | null };
+export type ProfileInput = Pick<Profile, 'name' | 'avatar_color' | 'avatar_emoji'> & {
+  avatar_image?: string | null;
+  expected_income?: number | null;
+};
 
 interface ProfileContextType {
   profiles: Profile[];
@@ -166,6 +171,7 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
   const addProfile = async (input: ProfileInput): Promise<Profile | null> => {
     if (!user) return null;
     const position = profiles.length ? Math.max(...profiles.map(p => p.position)) + 1 : 0;
+    setError(null);
 
     if (useRemote) {
       const { data, error } = await supabase
@@ -190,6 +196,7 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
 
   const updateProfile = async (id: string, input: Partial<ProfileInput>): Promise<Profile | null> => {
     if (!user) return null;
+    setError(null);
 
     if (useRemote) {
       const { data, error } = await supabase

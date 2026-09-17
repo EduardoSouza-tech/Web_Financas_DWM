@@ -10,7 +10,7 @@ const sizes = {
 
 interface ProfileAvatarProps {
   /** Sem perfil = avatar da visão Família */
-  profile?: Pick<Profile, 'name' | 'avatar_color' | 'avatar_emoji'> | null;
+  profile?: Pick<Profile, 'name' | 'avatar_color' | 'avatar_emoji' | 'avatar_image'> | null;
   size?: keyof typeof sizes;
   className?: string;
 }
@@ -27,6 +27,18 @@ export function ProfileAvatar({ profile, size = 'md', className }: ProfileAvatar
       >
         <Users className={size === 'xl' ? 'w-14 h-14' : size === 'md' ? 'w-5 h-5' : 'w-4 h-4'} />
       </div>
+    );
+  }
+
+  if (profile.avatar_image) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={profile.avatar_image}
+        alt={`Foto de ${profile.name}`}
+        className={cn('shrink-0 object-cover select-none bg-muted', sizes[size], className)}
+        draggable={false}
+      />
     );
   }
 

@@ -64,10 +64,10 @@ export default function ProfilesPage() {
         {managing ? 'Gerenciar perfis' : 'Quem está usando?'}
       </motion.h1>
 
-      {error && (
+      {error && !dialogOpen && (
         <p className="mb-6 max-w-md text-center text-sm text-red-500">
-          Não foi possível carregar os perfis: {error}. Verifique se a migração
-          <code className="mx-1">002_profiles.sql</code> foi executada no Supabase.
+          Algo deu errado com os perfis: {error}. Se a mensagem citar uma coluna ou tabela que não existe, rode as
+          migrações pendentes no Supabase.
         </p>
       )}
 
@@ -132,6 +132,7 @@ export default function ProfilesPage() {
           const saved = editing ? await updateProfile(editing.id, input) : await addProfile(input);
           if (saved) setDialogOpen(false);
         }}
+        error={dialogOpen ? error : null}
         onDelete={async () => {
           if (editing && (await deleteProfile(editing.id))) setDialogOpen(false);
         }}

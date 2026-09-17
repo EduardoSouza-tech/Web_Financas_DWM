@@ -54,3 +54,26 @@ yarn-error.log*
 .firebase/
 firebase-debug.log
 firestore-debug.log
+
+# Dados financeiros reais (faturas e extrações) - nunca versionar
+Fatura_*.pdf
+*.pdf
+*.csv
+*.xlsx
+!apps/web/public/samples/**
+
+# Saídas temporárias de depuração
+temp_*.json
+temp_*.txt
+temp_script.py
+resultado*.json
+resultado*.txt
+saida_completa.txt
+stdout*.txt
+stderr*.txt
+debug*.txt
+teste_novo.txt
+transacoes_*.txt
+
+# TypeScript
+*.tsbuildinfo

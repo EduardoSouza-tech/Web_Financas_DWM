@@ -2,6 +2,8 @@
 
 import { useAuth } from '@/providers/auth-provider';
 import { useTheme } from '@/providers/theme-provider';
+import { useProfiles } from '@/providers/profile-provider';
+import { ProfileSwitcher } from '@/components/profiles/profile-switcher';
 import { FinanceProvider } from '@/contexts/FinanceContext';
 import { Button } from '@/components/ui/button';
 import { 
@@ -17,11 +19,12 @@ import {
   LogOut,
   CreditCard,
   Zap,
-  TrendingDown
+  TrendingDown,
+  FileText
 } from 'lucide-react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 
@@ -33,6 +36,7 @@ const navigation = [
   { name: 'Cartões', href: '/dashboard/cards', icon: CreditCard },
   { name: 'Assinaturas', href: '/dashboard/subscriptions', icon: Zap },
   { name: 'Dívidas', href: '/dashboard/debts', icon: TrendingDown },
+  { name: 'Conciliação', href: '/dashboard/conciliacao', icon: FileText },
   { name: 'Previsões', href: '/dashboard/forecasts', icon: TrendingUp },
   { name: 'Configurações', href: '/dashboard/settings', icon: Settings },
 ];
@@ -42,10 +46,29 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { user, signOut } = useAuth();
+  const { user, loading: authLoading, signOut } = useAuth();
+  const { activeProfile, activeProfileId, isFamilyView, loading: profilesLoading } = useProfiles();
   const { theme, toggleTheme } = useTheme();
   const pathname = usePathname();
+  const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Sem perfil escolhido: mandar para a tela "Quem está usando?"
+  const needsProfile = !authLoading && !profilesLoading && !!user && !activeProfileId;
+  useEffect(() => {
+    if (!authLoading && !user) router.replace('/login');
+    else if (needsProfile) router.replace('/profiles');
+  }, [authLoading, user, needsProfile, router]);
+
+  if (authLoading || profilesLoading || !user || !activeProfileId) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary" />
+      </div>
+    );
+  }
+
+  const greeting = isFamilyView ? 'Finanças da família' : `Olá, ${activeProfile?.name ?? 'Usuário'}`;
 
   const handleSignOut = async () => {
     await signOut();
@@ -192,8 +215,8 @@ export default function DashboardLayout({
 
           <div className="flex flex-1 gap-x-4 self-stretch lg:gap-x-6">
             <div className="flex flex-1 items-center">
-              <h1 className="text-xl font-semibold">
-                Olá, {user?.email?.split('@')[0] || 'Usuário'}
+              <h1 className="text-xl font-semibold truncate">
+                {greeting}
               </h1>
             </div>
             <div className="flex items-center gap-x-4 lg:gap-x-6">
@@ -205,6 +228,7 @@ export default function DashboardLayout({
               >
                 {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
               </Button>
+              <ProfileSwitcher />
             </div>
           </div>
         </div>
@@ -213,6 +237,7 @@ export default function DashboardLayout({
         <main className="py-8 px-4 sm:px-6 lg:px-8">
           <FinanceProvider>
             <motion.div
+              key={activeProfileId}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3 }}

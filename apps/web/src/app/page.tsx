@@ -12,9 +12,9 @@ export default function HomePage() {
   useEffect(() => {
     if (!loading) {
       if (user) {
-        router.push('/dashboard');
+        router.push('/profiles');
       } else {
-        router.push('/auth/login');
+        router.push('/login');
       }
     }
   }, [user, loading, router]);

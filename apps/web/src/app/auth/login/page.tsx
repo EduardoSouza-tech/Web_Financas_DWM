@@ -12,6 +12,7 @@ import { Wallet, TrendingUp } from 'lucide-react';
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -26,11 +27,11 @@ export default function LoginPage() {
 
     try {
       if (isSignUp) {
-        await signUp(email, password);
+        await signUp(email, password, name || 'Usuário');
       } else {
         await signIn(email, password);
       }
-      router.push('/dashboard');
+      router.push('/profiles');
     } catch (err: any) {
       setError(err.message || 'Erro ao autenticar');
     } finally {

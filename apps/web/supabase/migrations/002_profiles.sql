@@ -3,7 +3,8 @@
 -- ============================================
 -- Cada conta (auth.users / public.users) pode ter vários perfis.
 -- Transações, dívidas, conquistas e categorias passam a pertencer a um perfil.
--- Executar no SQL Editor do Supabase DEPOIS do schema.sql.
+-- Ordem: 1) schema.sql  2) este arquivo  3) 003_expected_income.sql
+-- Pode ser executado mais de uma vez.
 
 -- ============================================
 -- TABELA: profiles
@@ -23,22 +24,27 @@ CREATE INDEX IF NOT EXISTS idx_profiles_user_id ON public.profiles(user_id);
 
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can view own profiles" ON public.profiles;
 CREATE POLICY "Users can view own profiles"
   ON public.profiles FOR SELECT
   USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can insert own profiles" ON public.profiles;
 CREATE POLICY "Users can insert own profiles"
   ON public.profiles FOR INSERT
   WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update own profiles" ON public.profiles;
 CREATE POLICY "Users can update own profiles"
   ON public.profiles FOR UPDATE
   USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can delete own profiles" ON public.profiles;
 CREATE POLICY "Users can delete own profiles"
   ON public.profiles FOR DELETE
   USING (auth.uid() = user_id);
 
+DROP TRIGGER IF EXISTS update_profiles_updated_at ON public.profiles;
 CREATE TRIGGER update_profiles_updated_at BEFORE UPDATE ON public.profiles
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
@@ -58,6 +64,12 @@ CREATE INDEX IF NOT EXISTS idx_categories_profile_id   ON public.categories(prof
 -- ============================================
 -- BACKFILL: um perfil para cada usuário existente
 -- ============================================
+-- Contas criadas antes do schema.sql não têm linha em public.users
+INSERT INTO public.users (id, email, name)
+SELECT a.id, a.email, COALESCE(a.raw_user_meta_data->>'name', 'Usuário')
+FROM auth.users a
+WHERE NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = a.id);
+
 INSERT INTO public.profiles (user_id, name, position)
 SELECT u.id, u.name, 0
 FROM public.users u
@@ -96,12 +108,16 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS check_transactions_profile ON public.transactions;
 CREATE TRIGGER check_transactions_profile BEFORE INSERT OR UPDATE ON public.transactions
   FOR EACH ROW EXECUTE FUNCTION public.check_profile_owner();
+DROP TRIGGER IF EXISTS check_debts_profile ON public.debts;
 CREATE TRIGGER check_debts_profile BEFORE INSERT OR UPDATE ON public.debts
   FOR EACH ROW EXECUTE FUNCTION public.check_profile_owner();
+DROP TRIGGER IF EXISTS check_achievements_profile ON public.achievements;
 CREATE TRIGGER check_achievements_profile BEFORE INSERT OR UPDATE ON public.achievements
   FOR EACH ROW EXECUTE FUNCTION public.check_profile_owner();
+DROP TRIGGER IF EXISTS check_categories_profile ON public.categories;
 CREATE TRIGGER check_categories_profile BEFORE INSERT OR UPDATE ON public.categories
   FOR EACH ROW EXECUTE FUNCTION public.check_profile_owner();
 

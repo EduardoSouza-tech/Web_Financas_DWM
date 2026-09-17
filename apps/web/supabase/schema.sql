@@ -22,11 +22,13 @@ CREATE TABLE IF NOT EXISTS public.users (
 -- RLS para users
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Users can view own data" 
+DROP POLICY IF EXISTS "Users can view own data" ON public.users;
+CREATE POLICY "Users can view own data"
   ON public.users FOR SELECT 
   USING (auth.uid() = id);
 
-CREATE POLICY "Users can update own data" 
+DROP POLICY IF EXISTS "Users can update own data" ON public.users;
+CREATE POLICY "Users can update own data"
   ON public.users FOR UPDATE 
   USING (auth.uid() = id);
 
@@ -47,19 +49,23 @@ CREATE TABLE IF NOT EXISTS public.categories (
 -- RLS para categories
 ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Users can view own categories" 
+DROP POLICY IF EXISTS "Users can view own categories" ON public.categories;
+CREATE POLICY "Users can view own categories"
   ON public.categories FOR SELECT 
   USING (auth.uid() = user_id);
 
-CREATE POLICY "Users can insert own categories" 
+DROP POLICY IF EXISTS "Users can insert own categories" ON public.categories;
+CREATE POLICY "Users can insert own categories"
   ON public.categories FOR INSERT 
   WITH CHECK (auth.uid() = user_id);
 
-CREATE POLICY "Users can update own categories" 
+DROP POLICY IF EXISTS "Users can update own categories" ON public.categories;
+CREATE POLICY "Users can update own categories"
   ON public.categories FOR UPDATE 
   USING (auth.uid() = user_id);
 
-CREATE POLICY "Users can delete own categories" 
+DROP POLICY IF EXISTS "Users can delete own categories" ON public.categories;
+CREATE POLICY "Users can delete own categories"
   ON public.categories FOR DELETE 
   USING (auth.uid() = user_id);
 
@@ -86,19 +92,23 @@ CREATE INDEX IF NOT EXISTS idx_transactions_type ON public.transactions(type);
 -- RLS para transactions
 ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Users can view own transactions" 
+DROP POLICY IF EXISTS "Users can view own transactions" ON public.transactions;
+CREATE POLICY "Users can view own transactions"
   ON public.transactions FOR SELECT 
   USING (auth.uid() = user_id);
 
-CREATE POLICY "Users can insert own transactions" 
+DROP POLICY IF EXISTS "Users can insert own transactions" ON public.transactions;
+CREATE POLICY "Users can insert own transactions"
   ON public.transactions FOR INSERT 
   WITH CHECK (auth.uid() = user_id);
 
-CREATE POLICY "Users can update own transactions" 
+DROP POLICY IF EXISTS "Users can update own transactions" ON public.transactions;
+CREATE POLICY "Users can update own transactions"
   ON public.transactions FOR UPDATE 
   USING (auth.uid() = user_id);
 
-CREATE POLICY "Users can delete own transactions" 
+DROP POLICY IF EXISTS "Users can delete own transactions" ON public.transactions;
+CREATE POLICY "Users can delete own transactions"
   ON public.transactions FOR DELETE 
   USING (auth.uid() = user_id);
 
@@ -130,19 +140,23 @@ CREATE INDEX IF NOT EXISTS idx_debts_next_due_date ON public.debts(next_due_date
 -- RLS para debts
 ALTER TABLE public.debts ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Users can view own debts" 
+DROP POLICY IF EXISTS "Users can view own debts" ON public.debts;
+CREATE POLICY "Users can view own debts"
   ON public.debts FOR SELECT 
   USING (auth.uid() = user_id);
 
-CREATE POLICY "Users can insert own debts" 
+DROP POLICY IF EXISTS "Users can insert own debts" ON public.debts;
+CREATE POLICY "Users can insert own debts"
   ON public.debts FOR INSERT 
   WITH CHECK (auth.uid() = user_id);
 
-CREATE POLICY "Users can update own debts" 
+DROP POLICY IF EXISTS "Users can update own debts" ON public.debts;
+CREATE POLICY "Users can update own debts"
   ON public.debts FOR UPDATE 
   USING (auth.uid() = user_id);
 
-CREATE POLICY "Users can delete own debts" 
+DROP POLICY IF EXISTS "Users can delete own debts" ON public.debts;
+CREATE POLICY "Users can delete own debts"
   ON public.debts FOR DELETE 
   USING (auth.uid() = user_id);
 
@@ -168,15 +182,18 @@ CREATE INDEX IF NOT EXISTS idx_achievements_paid_at ON public.achievements(paid_
 -- RLS para achievements
 ALTER TABLE public.achievements ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Users can view own achievements" 
+DROP POLICY IF EXISTS "Users can view own achievements" ON public.achievements;
+CREATE POLICY "Users can view own achievements"
   ON public.achievements FOR SELECT 
   USING (auth.uid() = user_id);
 
-CREATE POLICY "Users can insert own achievements" 
+DROP POLICY IF EXISTS "Users can insert own achievements" ON public.achievements;
+CREATE POLICY "Users can insert own achievements"
   ON public.achievements FOR INSERT 
   WITH CHECK (auth.uid() = user_id);
 
-CREATE POLICY "Users can delete own achievements" 
+DROP POLICY IF EXISTS "Users can delete own achievements" ON public.achievements;
+CREATE POLICY "Users can delete own achievements"
   ON public.achievements FOR DELETE 
   USING (auth.uid() = user_id);
 
@@ -191,15 +208,19 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS update_users_updated_at ON public.users;
 CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON public.users
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_categories_updated_at ON public.categories;
 CREATE TRIGGER update_categories_updated_at BEFORE UPDATE ON public.categories
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_transactions_updated_at ON public.transactions;
 CREATE TRIGGER update_transactions_updated_at BEFORE UPDATE ON public.transactions
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_debts_updated_at ON public.debts;
 CREATE TRIGGER update_debts_updated_at BEFORE UPDATE ON public.debts
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
@@ -216,8 +237,8 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Trigger para criar perfil ao registrar
-CREATE TRIGGER on_auth_user_created
-  AFTER INSERT ON auth.users
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
 -- ============================================

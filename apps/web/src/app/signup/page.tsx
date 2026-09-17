@@ -16,6 +16,7 @@ export default function SignupPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  const [needsConfirmation, setNeedsConfirmation] = useState(false);
 
   // Verificar se Supabase está configurado
   const supabaseConfigured = 
@@ -35,8 +36,13 @@ export default function SignupPage() {
     }
 
     try {
-      await signUp(email, password, name);
+      const { needsEmailConfirmation } = await signUp(email, password, name);
       setSuccess(true);
+      if (needsEmailConfirmation) {
+        // Sem sessão até confirmar o e-mail: não adianta ir para os perfis
+        setNeedsConfirmation(true);
+        return;
+      }
       setTimeout(() => {
         router.push('/profiles');
       }, 2000);
@@ -154,7 +160,9 @@ export default function SignupPage() {
                 animate={{ opacity: 1, height: 'auto' }}
                 className="p-4 rounded-lg bg-green-500/10 border border-green-500/20 text-green-400 text-sm"
               >
-                Conta criada com sucesso! Redirecionando...
+                {needsConfirmation
+                  ? `Conta criada! Enviamos um link de confirmação para ${email}. Confirme e depois faça login.`
+                  : 'Conta criada com sucesso! Redirecionando...'}
               </motion.div>
             )}
 

@@ -294,6 +294,60 @@ export function computeScore(input: ScoreInput): { total: number | null; criteri
 }
 
 // ============================================
+// Dívidas
+// ============================================
+
+export interface DebtPayment {
+  id: string;
+  profile_id?: string;
+  debtId: string;
+  date: string;
+  amount: number;
+  installments: number; // parcelas cobertas por este pagamento
+  kind: 'installment' | 'advance' | 'payoff';
+}
+
+export interface DebtSchedule {
+  id: string;
+  status?: 'active' | 'paid';
+  monthlyPayment: number;
+  nextDueDate: string;
+  installmentsPaid: number;
+  totalInstallments: number;
+}
+
+export function remainingInstallments(debt: DebtSchedule): number {
+  return Math.max(0, (debt.totalInstallments ?? 0) - (debt.installmentsPaid ?? 0));
+}
+
+/** Parcelas ainda não pagas que vencem no mês (só para o mês atual e futuros; atrasadas contam no mês atual) */
+export function pendingDebtPayment(debt: DebtSchedule, month: MonthKey, today = todayISO()): number {
+  if (debt.status === 'paid') return 0;
+  const current = monthOfDate(today);
+  if (month < current) return 0;
+  const offset = monthsBetween(monthOfDate(debt.nextDueDate), month);
+  if (month === current && offset > 0) return debt.monthlyPayment; // atrasada
+  return offset >= 0 && offset < remainingInstallments(debt) ? debt.monthlyPayment : 0;
+}
+
+/** Pagamentos de dívidas no mês = o que foi pago de fato + o que ainda vai vencer no mês */
+export function debtPaymentsForMonth(
+  month: MonthKey,
+  debts: DebtSchedule[],
+  payments: DebtPayment[],
+  today = todayISO()
+): { paid: number; pending: number; total: number } {
+  const paid = payments.filter(p => monthOfDate(p.date) === month).reduce((s, p) => s + p.amount, 0);
+  const pending = debts.reduce((s, d) => s + pendingDebtPayment(d, month, today), 0);
+  return { paid, pending, total: paid + pending };
+}
+
+/** Mesmo dia do mês, N meses depois (dia 31 vira o último dia de meses curtos) */
+export function addMonthsToDate(date: string, months: number): string {
+  return dateInMonth(addMonths(monthOfDate(date), months), Number(date.slice(8, 10)));
+}
+
+// ============================================
 // Projeção
 // ============================================
 
@@ -315,7 +369,8 @@ export interface ForecastInput {
   habitualExpenses: number;
   /** Parcelas já compradas e assinaturas, por mês (já conhecidas) */
   committedExpenses: (month: MonthKey) => number;
-  debts: Array<{ monthlyPayment: number; remainingInstallments: number }>;
+  /** Parcelas de dívidas previstas para o mês */
+  debtPayments: (month: MonthKey) => number;
   plannedContributions: number;
 }
 
@@ -323,9 +378,7 @@ export function buildForecast(input: ForecastInput): ForecastMonth[] {
   let accumulated = 0;
   return Array.from({ length: input.months }, (_, i) => {
     const month = addMonths(input.fromMonth, i + 1);
-    const debtPayments = input.debts
-      .filter(d => d.remainingInstallments > i + 1)
-      .reduce((s, d) => s + d.monthlyPayment, 0);
+    const debtPayments = input.debtPayments(month);
     const expenses = input.habitualExpenses + input.committedExpenses(month);
     const balance = input.income - expenses - debtPayments - input.plannedContributions;
     accumulated += balance;

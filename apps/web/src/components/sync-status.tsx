@@ -1,12 +1,12 @@
 'use client'
 
-import { AlertTriangle, RefreshCw, X } from 'lucide-react'
+import { AlertTriangle, CloudOff, RefreshCw, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useFinance } from '@/contexts/FinanceContext'
 
 /** Mostra carregamento dos dados do banco e avisa quando algo não foi salvo */
 export function SyncGate({ children }: { children: React.ReactNode }) {
-  const { syncState, syncError, dismissSyncError, reload } = useFinance()
+  const { syncState, syncError, pendingSync, dismissSyncError, reload } = useFinance()
 
   if (syncState === 'loading') {
     return (
@@ -25,7 +25,7 @@ export function SyncGate({ children }: { children: React.ReactNode }) {
         </p>
         <p className="text-sm text-muted-foreground break-words">{syncError}</p>
         <p className="text-sm text-muted-foreground">
-          Se a mensagem citar uma tabela que não existe, rode a migração <code>004_persistence.sql</code> no Supabase.
+          Se a mensagem citar uma tabela que não existe, rode as migrações que faltam no Supabase (a mais recente é <code>005_debt_payments.sql</code>).
         </p>
         <Button onClick={reload} className="gap-2">
           <RefreshCw className="w-4 h-4" /> Tentar de novo
@@ -36,6 +36,17 @@ export function SyncGate({ children }: { children: React.ReactNode }) {
 
   return (
     <>
+      {pendingSync > 0 && (
+        <div className="mb-6 flex items-center gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm">
+          <CloudOff className="w-5 h-5 text-amber-500 shrink-0" />
+          <p className="flex-1">
+            <span className="font-semibold">
+              {pendingSync} {pendingSync === 1 ? 'alteração aguardando' : 'alterações aguardando'} conexão.
+            </span>{' '}
+            <span className="text-muted-foreground">Estão guardadas neste navegador e serão enviadas quando a internet voltar.</span>
+          </p>
+        </div>
+      )}
       {syncError && (
         <div className="mb-6 flex items-start gap-3 rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-sm">
           <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" />

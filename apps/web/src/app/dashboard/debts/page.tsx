@@ -10,6 +10,7 @@ import { Progress } from '@/components/ui/progress';
 import { Input } from '@/components/ui/input';
 import { computeHealth, simulateDebtPayoff } from '@/lib/finance/health';
 import { useFinance } from '@/contexts/FinanceContext';
+import { useConfirm } from '@/providers/confirm-provider';
 
 interface Debt {
   id: string;
@@ -26,53 +27,23 @@ interface Debt {
   color: string;
 }
 
-const mockDebts: Debt[] = [
-  {
-    id: '1',
-    name: 'Financiamento do Carro',
-    type: 'financing',
-    totalAmount: 45000,
-    remainingAmount: 28500,
-    monthlyPayment: 1250,
-    interestRate: 1.2,
-    installmentsPaid: 18,
-    totalInstallments: 48,
-    nextDueDate: '2025-11-15',
-    creditor: 'Banco Inter',
-    color: 'from-blue-500 to-blue-700'
-  },
-  {
-    id: '2',
-    name: 'Empréstimo Pessoal',
-    type: 'loan',
-    totalAmount: 15000,
-    remainingAmount: 8500,
-    monthlyPayment: 650,
-    interestRate: 2.5,
-    installmentsPaid: 10,
-    totalInstallments: 24,
-    nextDueDate: '2025-11-20',
-    creditor: 'Nubank',
-    color: 'from-purple-500 to-purple-700'
-  },
-  {
-    id: '3',
-    name: 'Cartão de Crédito Parcelado',
-    type: 'credit',
-    totalAmount: 3200,
-    remainingAmount: 1600,
-    monthlyPayment: 400,
-    interestRate: 3.8,
-    installmentsPaid: 4,
-    totalInstallments: 8,
-    nextDueDate: '2025-11-10',
-    creditor: 'C6 Bank',
-    color: 'from-orange-500 to-orange-700'
-  }
-];
-
 export default function DebtsPage() {
-  const { debts, setDebts, getTotalIncome, getTotalExpenses, getTotalDebtPayments, addAchievement } = useFinance();
+  const confirm = useConfirm();
+  const {
+    debts,
+    paidDebts,
+    debtPayments,
+    addDebt,
+    deleteDebt,
+    payDebtInstallment,
+    advanceDebtInstallments,
+    payOffDebt,
+    getTotalIncome,
+    getTotalExpenses,
+    getTotalDebtPayments,
+    getMonthlyDebtCommitment,
+    referenceMonth,
+  } = useFinance();
   const health = computeHealth(getTotalIncome(), getTotalExpenses(), getTotalDebtPayments());
   const [paidMessage, setPaidMessage] = useState<string | null>(null);
   const [selectedDebt, setSelectedDebt] = useState<Debt | null>(null);
@@ -89,11 +60,6 @@ export default function DebtsPage() {
     creditor: ''
   });
 
-  // Registra a quitação nas conquistas (aparecem no Overview)
-  const saveAchievement = (debt: any, amountPaid?: number) => {
-    addAchievement(debt, amountPaid);
-  };
-
   const handlePayOffDebt = (debtId: string) => {
     const debt = debts.find(d => d.id === debtId);
     if (debt) {
@@ -105,12 +71,8 @@ export default function DebtsPage() {
   const confirmPayOff = () => {
     if (!debtToPayOff) return;
 
-    // Remove a dívida PRIMEIRO
-    const updatedDebts = debts.filter(d => d.id !== debtToPayOff.id);
-    setDebts(updatedDebts);
-
-    // DEPOIS salva a conquista (só se a dívida foi realmente removida)
-    saveAchievement(debtToPayOff);
+    // Registra o pagamento do saldo, marca como quitada (fica no histórico) e gera a conquista
+    payOffDebt(debtToPayOff.id);
 
     setPaidMessage(`🎉 Parabéns! Dívida "${debtToPayOff.name}" quitada totalmente! Você liberou ${debtToPayOff.monthlyPayment.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}/mês!`);
 
@@ -132,23 +94,11 @@ export default function DebtsPage() {
     const newRemainingAmount = selectedDebt.remainingAmount - amountPaid;
     const newInstallmentsPaid = selectedDebt.installmentsPaid + actualInstallments;
 
+    advanceDebtInstallments(selectedDebt.id, actualInstallments);
     if (newRemainingAmount <= 0 || newInstallmentsPaid >= selectedDebt.totalInstallments) {
-      // Quitou totalmente
       setPaidMessage(`✅ Você adiantou ${actualInstallments} parcela(s) de "${selectedDebt.name}" e QUITOU a dívida! 🎉`);
-      setDebts(debts.filter(d => d.id !== selectedDebt.id));
-      saveAchievement(selectedDebt, selectedDebt.remainingAmount);
     } else {
-      // Adianto parcial
-      setPaidMessage(`✅ Você adiantou ${actualInstallments} parcela(s) de "${selectedDebt.name}" (${amountPaid.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })})`);
-      setDebts(debts.map(d => 
-        d.id === selectedDebt.id 
-          ? { 
-              ...d, 
-              remainingAmount: newRemainingAmount,
-              installmentsPaid: newInstallmentsPaid
-            }
-          : d
-      ));
+      setPaidMessage(`✅ Você adiantou ${actualInstallments} parcela(s) de "${selectedDebt.name}" (${amountPaid.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}). O vencimento do mês continua.`);
     }
 
     // Fecha o diálogo e reseta
@@ -181,8 +131,7 @@ export default function DebtsPage() {
     const colors = ['from-blue-500 to-blue-700', 'from-purple-500 to-purple-700', 'from-orange-500 to-orange-700', 'from-green-500 to-green-700'];
     const randomColor = colors[Math.floor(Math.random() * colors.length)];
 
-    const newDebt: Debt = {
-      id: `debt-${Date.now()}`,
+    const newDebt = {
       name: debtForm.name,
       type: debtForm.type,
       totalAmount,
@@ -196,13 +145,47 @@ export default function DebtsPage() {
       color: randomColor
     };
 
-    setDebts([...debts, newDebt]);
+    addDebt(newDebt);
     setDebtForm({ name: '', type: 'loan', totalAmount: '', interestRate: '', totalInstallments: '', creditor: '' });
     setShowAddModal(false);
   };
 
   const totalDebt = debts.reduce((sum, debt) => sum + debt.remainingAmount, 0);
-  const totalMonthly = debts.reduce((sum, debt) => sum + debt.monthlyPayment, 0);
+  const totalMonthly = getMonthlyDebtCommitment();
+
+  const handlePayInstallment = (debt: Debt) => {
+    const finishing = debt.installmentsPaid + 1 >= debt.totalInstallments;
+    payDebtInstallment(debt.id);
+    setPaidMessage(
+      finishing
+        ? `🎉 Última parcela de "${debt.name}" paga. Dívida quitada!`
+        : `✅ Parcela de "${debt.name}" paga (${debt.monthlyPayment.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}). Próximo vencimento avançou um mês.`
+    );
+    setTimeout(() => setPaidMessage(null), 5000);
+  };
+
+  const monthPayments = debtPayments
+    .filter(p => p.date.slice(0, 7) === referenceMonth)
+    .sort((a, b) => b.date.localeCompare(a.date));
+  const debtName = (id: string) => [...debts, ...paidDebts].find(d => d.id === id)?.name ?? 'Dívida excluída';
+  const kindLabel = { installment: 'Parcela', advance: 'Adiantamento', payoff: 'Quitação' } as const;
+
+  const handleDeleteDebt = async (debt: { id: string; name: string }) => {
+    const payments = debtPayments.filter(p => p.debtId === debt.id);
+    const total = payments.reduce((s, p) => s + p.amount, 0);
+    const ok = await confirm({
+      title: `Excluir a dívida "${debt.name}"?`,
+      message:
+        (payments.length > 0
+          ? `Também serão apagados ${payments.length} pagamento(s) registrados (${total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}), que saem das análises, e a conquista dela.
+
+`
+          : '') + 'Use para lançamentos errados ou de teste. Para manter o histórico, use "Quitar Totalmente".',
+      confirmLabel: 'Excluir dívida',
+      destructive: true,
+    });
+    if (ok) deleteDebt(debt.id);
+  };
   const totalPaid = debts.reduce((sum, debt) => sum + (debt.totalAmount - debt.remainingAmount), 0);
   const averageInterest = debts.length > 0 ? debts.reduce((sum, debt) => sum + debt.interestRate, 0) / debts.length : 0;
 
@@ -616,8 +599,15 @@ export default function DebtsPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <Button 
-                      variant="default" 
+                    <Button
+                      variant="default"
+                      className="w-full"
+                      onClick={() => handlePayInstallment(debt)}
+                    >
+                      Pagar parcela ({new Date(`${debt.nextDueDate}T12:00:00`).toLocaleDateString('pt-BR')})
+                    </Button>
+                    <Button
+                      variant="default"
                       className="w-full bg-blue-600 hover:bg-blue-700"
                       onClick={() => setSelectedDebt(debt)}
                     >
@@ -630,6 +620,14 @@ export default function DebtsPage() {
                     >
                       Quitar Totalmente
                     </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-full text-red-500 hover:text-red-600 hover:bg-red-500/10"
+                      onClick={() => handleDeleteDebt(debt)}
+                    >
+                      Excluir (lançamento errado)
+                    </Button>
                   </div>
                 </CardContent>
               </Card>
@@ -639,6 +637,69 @@ export default function DebtsPage() {
           </AnimatePresence>
         </div>
       )}
+
+      {/* Pagamentos do mês e dívidas quitadas */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Pagamentos registrados no mês</CardTitle>
+            <CardDescription>Entram no saldo do mês; o que ainda vai vencer também é contado</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {monthPayments.length === 0 && <p className="text-sm text-muted-foreground">Nenhum pagamento registrado neste mês.</p>}
+            {monthPayments.map(p => (
+              <div key={p.id} className="flex items-center justify-between text-sm border-b last:border-0 py-2">
+                <div>
+                  <p className="font-medium">{debtName(p.debtId)}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {kindLabel[p.kind]} · {new Date(`${p.date}T12:00:00`).toLocaleDateString('pt-BR')}
+                    {p.installments > 1 ? ` · ${p.installments} parcelas` : ''}
+                  </p>
+                </div>
+                <span className="font-semibold text-orange-600">
+                  - {p.amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                </span>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Trophy className="w-4 h-4 text-yellow-500" /> Dívidas quitadas
+            </CardTitle>
+            <CardDescription>Ficam no histórico; os pagamentos antigos continuam nas análises</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {paidDebts.length === 0 && <p className="text-sm text-muted-foreground">Nenhuma dívida quitada ainda.</p>}
+            {paidDebts.map(d => (
+              <div key={d.id} className="flex items-center justify-between text-sm border-b last:border-0 py-2">
+                <div>
+                  <p className="font-medium">{d.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {d.creditor}
+                    {d.paidAt ? ` · quitada em ${new Date(d.paidAt).toLocaleDateString('pt-BR')}` : ''}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-green-600">
+                    {d.totalAmount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 px-2 text-red-500 hover:text-red-600 hover:bg-red-500/10"
+                    onClick={() => handleDeleteDebt(d)}
+                  >
+                    Excluir
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      </div>
 
       {/* Modal de Confirmação de Quitação */}
       <AnimatePresence>

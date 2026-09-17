@@ -3,7 +3,7 @@
  * (snake_case). Todas as tabelas têm RLS: cada usuário só enxerga as próprias linhas.
  */
 import { supabase } from '@/lib/supabase';
-import type { Goal, GoalContribution, Subscription } from './engine';
+import type { DebtPayment, Goal, GoalContribution, Subscription } from './engine';
 import type { DebtAchievement } from './achievements';
 
 // Tipos do app (mantidos soltos aqui para não criar dependência circular com o contexto)
@@ -111,6 +111,8 @@ const toDebt = (r: any) => ({
   nextDueDate: r.next_due_date,
   creditor: r.creditor,
   color: r.color,
+  status: r.status ?? 'active',
+  paidAt: r.paid_at ?? undefined,
 });
 
 const fromDebt = (userId: string, d: any) => ({
@@ -128,6 +130,18 @@ const fromDebt = (userId: string, d: any) => ({
   next_due_date: d.nextDueDate,
   creditor: d.creditor || 'Não informado',
   color: d.color || 'from-gray-500 to-gray-700',
+  status: d.status ?? 'active',
+  paid_at: d.paidAt ?? null,
+});
+
+const toDebtPayment = (r: any): DebtPayment => ({
+  id: r.id,
+  profile_id: r.profile_id,
+  debtId: r.debt_id,
+  date: r.date,
+  amount: num(r.amount),
+  installments: r.installments,
+  kind: r.kind,
 });
 
 const toCard = (r: any) => ({
@@ -254,6 +268,7 @@ const toAchievement = (r: any): DebtAchievement => ({
 export interface RemoteData {
   transactions: TransactionRecord[];
   debts: any[];
+  debtPayments: DebtPayment[];
   cards: any[];
   subscriptions: Subscription[];
   goals: Goal[];
@@ -263,10 +278,11 @@ export interface RemoteData {
 }
 
 export async function loadAll(): Promise<RemoteData> {
-  const [transactions, debts, cards, subscriptions, goals, contributions, invoices, categories, achievements] =
+  const [transactions, debts, debtPayments, cards, subscriptions, goals, contributions, invoices, categories, achievements] =
     await Promise.all([
       run('transações', supabase.from('transactions').select('*').order('date', { ascending: false })),
       run('dívidas', supabase.from('debts').select('*').order('next_due_date')),
+      run('pagamentos de dívidas', supabase.from('debt_payments').select('*').order('date')),
       run('cartões', supabase.from('cards').select('*').order('created_at')),
       run('assinaturas', supabase.from('subscriptions').select('*').order('created_at')),
       run('metas', supabase.from('goals').select('*').order('created_at')),
@@ -286,6 +302,7 @@ export async function loadAll(): Promise<RemoteData> {
   return {
     transactions: (transactions as any[]).map(toTransaction),
     debts: (debts as any[]).map(toDebt),
+    debtPayments: (debtPayments as any[]).map(toDebtPayment),
     cards: (cards as any[]).map(toCard),
     subscriptions: (subscriptions as any[]).map(toSubscription),
     goals: (goals as any[]).map(g => toGoal(g, contributionsByGoal.get(g.id) ?? [])),
@@ -308,6 +325,20 @@ export const repo = {
 
   upsertDebt: (userId: string, d: any) => run('salvar dívida', supabase.from('debts').upsert(fromDebt(userId, d))),
   deleteDebt: (id: string) => run('excluir dívida', supabase.from('debts').delete().eq('id', id)),
+  insertDebtPayment: (userId: string, payment: DebtPayment) =>
+    run(
+      'registrar pagamento de dívida',
+      supabase.from('debt_payments').upsert({
+        id: payment.id,
+        user_id: userId,
+        profile_id: payment.profile_id,
+        debt_id: payment.debtId,
+        date: payment.date,
+        amount: payment.amount,
+        installments: payment.installments,
+        kind: payment.kind,
+      })
+    ),
 
   upsertCard: (userId: string, c: any) => run('salvar cartão', supabase.from('cards').upsert(fromCard(userId, c))),
   deleteCard: (id: string) => run('excluir cartão', supabase.from('cards').delete().eq('id', id)),
@@ -323,7 +354,7 @@ export const repo = {
   insertContribution: (userId: string, goal: Goal, c: GoalContribution) =>
     run(
       'salvar aporte',
-      supabase.from('goal_contributions').insert({
+      supabase.from('goal_contributions').upsert({
         id: c.id,
         user_id: userId,
         profile_id: goal.profile_id,
@@ -353,7 +384,7 @@ export const repo = {
   insertCategories: (userId: string, categories: CategoryRecord[]) =>
     run(
       'criar categorias',
-      supabase.from('categories').insert(
+      supabase.from('categories').upsert(
         categories.map(c => ({ id: c.id, user_id: userId, name: c.name, icon: c.icon, type: c.type, budget_limit: c.budgetLimit ?? null }))
       )
     ),
@@ -367,7 +398,7 @@ export const repo = {
   insertAchievement: (userId: string, a: DebtAchievement) =>
     run(
       'salvar conquista',
-      supabase.from('achievements').insert({
+      supabase.from('achievements').upsert({
         id: a.id,
         user_id: userId,
         profile_id: a.profile_id,

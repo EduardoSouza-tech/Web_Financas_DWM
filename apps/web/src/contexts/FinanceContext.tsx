@@ -15,13 +15,17 @@ import {
   type MonthKey,
 } from '@/lib/finance/credit-card';
 import {
+  addMonthsToDate,
   buildForecast,
   computeScore,
+  debtPaymentsForMonth,
+  remainingInstallments,
   expandSubscription,
   goalContributionsInMonth,
   todayISO,
   withSubscriptionStatus,
   type CashCharge,
+  type DebtPayment,
   type ForecastMonth,
   type Goal,
   type ScoreCriterion,
@@ -30,6 +34,7 @@ import {
 import { computeHealth, type FinancialHealth } from '@/lib/finance/health';
 import { seedCards, seedDebts, seedGoals, seedSubscriptions, seedTransactions } from '@/lib/finance/seed';
 import { isUuid, loadAll, newUuid, repo } from '@/lib/finance/repository';
+import { enqueue, flushQueue, isNetworkError, readQueue, type RepoMethod } from '@/lib/finance/sync-queue';
 import {
   addAchievement as addLocalAchievement,
   clearAchievements as clearLocalAchievements,
@@ -110,6 +115,8 @@ interface FinanceContextType {
   syncState: SyncState;
   /** Última falha ao ler ou gravar no banco (null se está tudo salvo) */
   syncError: string | null;
+  /** Alterações guardadas no navegador esperando a conexão voltar */
+  pendingSync: number;
   dismissSyncError: () => void;
   reload: () => void;
 
@@ -136,8 +143,21 @@ interface FinanceContextType {
   setInvoiceStatementAmount: (profileId: string | undefined, cardId: string, month: MonthKey, amount?: number) => void;
   setInvoicePaid: (profileId: string | undefined, cardId: string, month: MonthKey, paid: boolean) => void;
 
+  /** Dívidas ativas do perfil */
   debts: any[];
-  setDebts: (debts: any[]) => void;
+  /** Dívidas quitadas (histórico) */
+  paidDebts: any[];
+  debtPayments: DebtPayment[];
+  addDebt: (debt: any) => void;
+  deleteDebt: (id: string) => void;
+  /** Paga a parcela do mês: avança o vencimento */
+  payDebtInstallment: (id: string, date?: string) => void;
+  /** Adianta parcelas (abate as últimas; o vencimento do mês continua) */
+  advanceDebtInstallments: (id: string, count: number, date?: string) => void;
+  payOffDebt: (id: string, date?: string) => void;
+  /** Soma das parcelas mensais das dívidas ativas (compromisso, não o que foi pago) */
+  getMonthlyDebtCommitment: () => number;
+  getDebtPaymentsForMonth: (month: MonthKey) => { paid: number; pending: number; total: number };
 
   subscriptions: Subscription[];
   saveSubscription: (sub: Omit<Subscription, 'id' | 'profile_id' | 'periods' | 'status'> & { id?: string }) => void;
@@ -196,6 +216,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const [allCards, setAllCards] = useState<any[]>([]);
   const [allSubscriptions, setAllSubscriptions] = useState<Subscription[]>([]);
   const [allGoals, setAllGoals] = useState<Goal[]>([]);
+  const [allDebtPayments, setAllDebtPayments] = useState<DebtPayment[]>([]);
 
   const [categories, setCategories] = useState<Category[]>(() => DEFAULT_CATEGORIES.map(c => ({ ...c, id: newId() })));
   const [invoices, setInvoices] = useState<Record<string, InvoiceState>>({});
@@ -203,25 +224,63 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const [syncState, setSyncState] = useState<SyncState>(remote ? 'loading' : 'offline');
   const [syncError, setSyncError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
+  const [pendingSync, setPendingSync] = useState(0);
 
-  // Grava no banco em segundo plano; a tela já foi atualizada. Falha vira aviso para o usuário.
+  const reportSyncError = useCallback((message: string) => {
+    console.error('Erro ao salvar no Supabase:', message);
+    setSyncError(message);
+  }, []);
+
+  const flush = useCallback(async () => {
+    if (!remote || !user) return 0;
+    const left = await flushQueue(user.id, reportSyncError);
+    setPendingSync(left);
+    return left;
+  }, [remote, user, reportSyncError]);
+
+  // Grava no banco em segundo plano; a tela já foi atualizada.
+  // Sem internet: guarda na fila do navegador e reenvia depois. Outros erros viram aviso.
   const persist = useCallback(
-    (action: () => Promise<unknown>) => {
+    <M extends RepoMethod>(method: M, ...args: Parameters<(typeof repo)[M]>) => {
       if (!remote || !user) return;
-      action().catch((err: Error) => {
-        console.error('Erro ao salvar no Supabase:', err);
-        setSyncError(err.message);
+      // Se já há algo na fila, entra atrás para manter a ordem das alterações
+      if (readQueue(user.id).length > 0) {
+        setPendingSync(enqueue(user.id, method, args));
+        flush();
+        return;
+      }
+      (repo[method] as (...a: unknown[]) => Promise<unknown>)(...args).catch((err: Error) => {
+        if (isNetworkError(err)) setPendingSync(enqueue(user.id, method, args));
+        else reportSyncError(err.message);
       });
     },
-    [remote, user]
+    [remote, user, flush, reportSyncError]
   );
+
+  // Reenvia a fila quando a conexão volta e, enquanto houver pendências, a cada 30 segundos
+  useEffect(() => {
+    if (!remote || !user) return;
+    setPendingSync(readQueue(user.id).length);
+    const onOnline = () => flush();
+    window.addEventListener('online', onOnline);
+    const timer = window.setInterval(() => {
+      if (readQueue(user.id).length > 0) flush();
+    }, 30000);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [remote, user?.id, flush]);
 
   // Modo offline: dados de exemplo no primeiro perfil (somem ao recarregar)
   useEffect(() => {
     if (remote || !firstProfileId) return;
     setAllCards(seedCards(firstProfileId));
     setAllTransactions(seedTransactions(firstProfileId));
-    setAllDebts(seedDebts(firstProfileId));
+    const seeded = seedDebts(firstProfileId);
+    setAllDebts(seeded.debts);
+    setAllDebtPayments(seeded.payments);
     setAllSubscriptions(seedSubscriptions(firstProfileId));
     setAllGoals(seedGoals(firstProfileId));
     setAchievements(loadLocalAchievements());
@@ -233,11 +292,17 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     if (!remote || !user) return;
     let cancelled = false;
     setSyncState('loading');
-    loadAll()
+    // Envia o que ficou pendente antes de ler, para a tela não voltar a um estado antigo
+    flushQueue(user.id, reportSyncError)
+      .then(left => {
+        setPendingSync(left);
+        return loadAll();
+      })
       .then(async data => {
         if (cancelled) return;
         setAllTransactions(data.transactions);
         setAllDebts(data.debts);
+        setAllDebtPayments(data.debtPayments);
         setAllCards(data.cards);
         setAllSubscriptions(data.subscriptions);
         setAllGoals(data.goals);
@@ -283,8 +348,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     (
       all: any[],
       setAll: React.Dispatch<React.SetStateAction<any[]>>,
-      save: (userId: string, item: any) => Promise<unknown>,
-      remove: (id: string) => Promise<unknown>
+      save: 'upsertTransaction' | 'upsertCard',
+      remove: 'deleteTransaction' | 'deleteCard'
     ) =>
       (next: any[]) => {
         const tagged = next.map(item => ({
@@ -301,9 +366,9 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
         const nextIds = new Set(tagged.map(item => item.id));
         tagged
           .filter(item => JSON.stringify(item) !== JSON.stringify(before.get(item.id)))
-          .forEach(item => persist(() => save(user.id, item)));
+          .forEach(item => persist(save, user.id, item));
         before.forEach((_item, id) => {
-          if (!nextIds.has(id)) persist(() => remove(id));
+          if (!nextIds.has(id)) persist(remove, id);
         });
       },
     [inView, targetProfileId, persist, user, remote]
@@ -312,7 +377,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const [referenceMonth, setReferenceMonth] = useState<MonthKey>(() => currentMonthKey());
 
   const transactions = useMemo(() => allTransactions.filter(inView), [allTransactions, inView]);
-  const debts = useMemo(() => allDebts.filter(inView), [allDebts, inView]);
+  const debts = useMemo(() => allDebts.filter(d => inView(d) && d.status !== 'paid'), [allDebts, inView]);
+  const paidDebts = useMemo(() => allDebts.filter(d => inView(d) && d.status === 'paid'), [allDebts, inView]);
   const subscriptions = useMemo(() => allSubscriptions.filter(inView), [allSubscriptions, inView]);
   const goals = useMemo(() => allGoals.filter(inView), [allGoals, inView]);
 
@@ -374,16 +440,14 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       const inv = invoices[key];
       const [profileId, cardId, month] = key.split('|');
       if (!inv || !isUuid(cardId)) return;
-      persist(() =>
-        repo.upsertInvoice(user.id, {
-          profile_id: profileId,
-          cardId,
-          month,
-          checked: inv.checked,
-          statementAmount: inv.statementAmount,
-          paidAt: inv.paidAt,
-        })
-      );
+      persist('upsertInvoice', user.id, {
+        profile_id: profileId,
+        cardId,
+        month,
+        checked: inv.checked,
+        statementAmount: inv.statementAmount,
+        paidAt: inv.paidAt,
+      });
     });
   }, [invoices, remote, user, persist]);
 
@@ -437,24 +501,103 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const addTransaction = (tx: Omit<Transaction, 'id' | 'profile_id'>) => {
     const record = { ...tx, id: newId('tx'), profile_id: targetProfileId };
     setAllTransactions(prev => [record, ...prev]);
-    persist(() => repo.upsertTransaction(user!.id, record));
+    persist('upsertTransaction', user!.id, record);
   };
 
   const deleteTransaction = (id: string) => {
     setAllTransactions(prev => prev.filter(tx => tx.id !== id));
-    persist(() => repo.deleteTransaction(id));
+    persist('deleteTransaction', id);
   };
 
-  const setTransactions = scopedSetter(allTransactions, setAllTransactions, repo.upsertTransaction, repo.deleteTransaction);
-  const setDebts = scopedSetter(allDebts, setAllDebts, repo.upsertDebt, repo.deleteDebt);
-  const setCards = scopedSetter(allCards, setAllCards, repo.upsertCard, repo.deleteCard);
+  const setTransactions = scopedSetter(allTransactions, setAllTransactions, 'upsertTransaction', 'deleteTransaction');
+  const setCards = scopedSetter(allCards, setAllCards, 'upsertCard', 'deleteCard');
+
+  // ============================================
+  // Dívidas: cada pagamento é registrado; quitar mantém o histórico
+  // ============================================
+  const debtPayments = useMemo(() => allDebtPayments.filter(inView), [allDebtPayments, inView]);
+
+  const saveDebt = (next: any) => {
+    setAllDebts(prev => (prev.some(d => d.id === next.id) ? prev.map(d => (d.id === next.id ? next : d)) : [...prev, next]));
+    persist('upsertDebt', user!.id, next);
+  };
+
+  const recordDebtPayment = (debt: any, amount: number, installments: number, kind: DebtPayment['kind'], date: string) => {
+    const payment: DebtPayment = { id: newId(), profile_id: debt.profile_id, debtId: debt.id, date, amount, installments, kind };
+    setAllDebtPayments(prev => [...prev, payment]);
+    persist('insertDebtPayment', user!.id, payment);
+  };
+
+  const finishIfDone = (debt: any) => {
+    const done = debt.installmentsPaid >= debt.totalInstallments || debt.remainingAmount <= 0.005;
+    if (!done) return debt;
+    return { ...debt, status: 'paid', paidAt: new Date().toISOString(), remainingAmount: 0, installmentsPaid: debt.totalInstallments };
+  };
+
+  const addDebt = (debt: any) => {
+    saveDebt({ ...debt, id: newId(), profile_id: targetProfileId, status: 'active' });
+  };
+
+  // Excluir = lançamento errado: some a dívida, os pagamentos (cascata no banco) e a conquista dela.
+  // Para manter o histórico, use quitar.
+  const deleteDebt = (id: string) => {
+    setAllDebts(prev => prev.filter(d => d.id !== id));
+    setAllDebtPayments(prev => prev.filter(p => p.debtId !== id));
+    persist('deleteDebt', id);
+    const achievementIds = achievements.filter(a => a.debtId === id).map(a => a.id);
+    if (achievementIds.length > 0) {
+      if (remote) {
+        setAchievements(prev => prev.filter(a => a.debtId !== id));
+        persist('deleteAchievements', achievementIds);
+      } else {
+        setAchievements(clearLocalAchievements(a => a.debtId === id));
+      }
+    }
+  };
+
+  const payDebtInstallment = (id: string, date = todayISO()) => {
+    const debt = allDebts.find(d => d.id === id);
+    if (!debt || debt.status === 'paid') return;
+    const amount = Math.min(debt.monthlyPayment, debt.remainingAmount);
+    recordDebtPayment(debt, amount, 1, 'installment', date);
+    const next = finishIfDone({
+      ...debt,
+      installmentsPaid: debt.installmentsPaid + 1,
+      remainingAmount: debt.remainingAmount - amount,
+      nextDueDate: addMonthsToDate(debt.nextDueDate, 1),
+    });
+    saveDebt(next);
+    if (next.status === 'paid') addAchievement(debt, amount);
+  };
+
+  const advanceDebtInstallments = (id: string, count: number, date = todayISO()) => {
+    const debt = allDebts.find(d => d.id === id);
+    if (!debt || debt.status === 'paid' || count < 1) return;
+    const n = Math.min(count, remainingInstallments(debt));
+    const amount = Math.min(n * debt.monthlyPayment, debt.remainingAmount);
+    recordDebtPayment(debt, amount, n, 'advance', date);
+    const next = finishIfDone({ ...debt, installmentsPaid: debt.installmentsPaid + n, remainingAmount: debt.remainingAmount - amount });
+    saveDebt(next);
+    if (next.status === 'paid') addAchievement(debt, amount);
+  };
+
+  const payOffDebt = (id: string, date = todayISO()) => {
+    const debt = allDebts.find(d => d.id === id);
+    if (!debt || debt.status === 'paid') return;
+    const amount = debt.remainingAmount;
+    if (amount > 0) recordDebtPayment(debt, amount, remainingInstallments(debt), 'payoff', date);
+    saveDebt({ ...debt, status: 'paid', paidAt: new Date().toISOString(), remainingAmount: 0, installmentsPaid: debt.totalInstallments });
+    addAchievement(debt, amount);
+  };
+
+  const getDebtPaymentsForMonth = (month: MonthKey) => debtPaymentsForMonth(month, debts, debtPayments);
 
   // ============================================
   // Assinaturas
   // ============================================
   const replaceSubscription = (next: Subscription) => {
     setAllSubscriptions(prev => prev.map(s => (s.id === next.id ? next : s)));
-    persist(() => repo.upsertSubscription(user!.id, next));
+    persist('upsertSubscription', user!.id, next);
   };
 
   const saveSubscription: FinanceContextType['saveSubscription'] = input => {
@@ -472,7 +615,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       periods: [{ start: todayISO() }],
     };
     setAllSubscriptions(prev => [...prev, created]);
-    persist(() => repo.upsertSubscription(user!.id, created));
+    persist('upsertSubscription', user!.id, created);
   };
 
   const setSubscriptionStatus = (id: string, status: Subscription['status']) => {
@@ -482,7 +625,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
   const deleteSubscription = (id: string) => {
     setAllSubscriptions(prev => prev.filter(s => s.id !== id));
-    persist(() => repo.deleteSubscription(id));
+    persist('deleteSubscription', id);
   };
 
   // ============================================
@@ -490,7 +633,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   // ============================================
   const replaceGoal = (next: Goal) => {
     setAllGoals(prev => prev.map(g => (g.id === next.id ? next : g)));
-    persist(() => repo.upsertGoal(user!.id, next));
+    persist('upsertGoal', user!.id, next);
   };
 
   const saveGoal: FinanceContextType['saveGoal'] = input => {
@@ -509,7 +652,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       contributions: [],
     };
     setAllGoals(prev => [...prev, created]);
-    persist(() => repo.upsertGoal(user!.id, created));
+    persist('upsertGoal', user!.id, created);
   };
 
   const setGoalStatus = (id: string, status: Goal['status']) => {
@@ -519,7 +662,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
   const deleteGoal = (id: string) => {
     setAllGoals(prev => prev.filter(g => g.id !== id));
-    persist(() => repo.deleteGoal(id));
+    persist('deleteGoal', id);
   };
 
   const addGoalContribution = (goalId: string, amount: number, date = todayISO()) => {
@@ -527,7 +670,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     if (!goal) return;
     const contribution = { id: newId('c'), date, amount };
     setAllGoals(prev => prev.map(g => (g.id === goalId ? { ...g, contributions: [...g.contributions, contribution] } : g)));
-    persist(() => repo.insertContribution(user!.id, goal, contribution));
+    persist('insertContribution', user!.id, goal, contribution);
   };
 
   // ============================================
@@ -550,7 +693,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       interestRate: debt.interestRate,
     };
     setAchievements(prev => [...prev, achievement]);
-    persist(() => repo.insertAchievement(user!.id, achievement));
+    persist('insertAchievement', user!.id, achievement);
   };
 
   const clearAchievements = () => {
@@ -560,7 +703,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     }
     const ids = achievements.filter(inView).map(a => a.id);
     setAchievements(prev => prev.filter(a => !inView(a)));
-    if (ids.length) persist(() => repo.deleteAchievements(ids));
+    if (ids.length) persist('deleteAchievements', ids);
   };
 
   // ============================================
@@ -569,15 +712,15 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const addCategory = (category: Omit<Category, 'id'>) => {
     const created = { ...category, id: newId() };
     setCategories(prev => [...prev, created]);
-    persist(() => repo.upsertCategory(user!.id, created));
+    persist('upsertCategory', user!.id, created);
   };
 
   // Transações e assinaturas guardam o NOME da categoria: renomear/excluir precisa refletir nelas
   const renameCategoryUsages = (from: string, to: string) => {
     setAllTransactions(prev => prev.map(tx => (tx.category === from ? { ...tx, category: to } : tx)));
     setAllSubscriptions(prev => prev.map(s => (s.category === from ? { ...s, category: to } : s)));
-    persist(() => repo.updateTransactionsCategory(from, to));
-    persist(() => repo.updateSubscriptionsCategory(from, to));
+    persist('updateTransactionsCategory', from, to);
+    persist('updateSubscriptionsCategory', from, to);
   };
 
   const updateCategory = (id: string, updates: Partial<Category>) => {
@@ -587,7 +730,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     if (newName && newName !== current.name) renameCategoryUsages(current.name, newName);
     const next = { ...current, ...updates, ...(newName ? { name: newName } : {}) };
     setCategories(prev => prev.map(cat => (cat.id === id ? next : cat)));
-    persist(() => repo.upsertCategory(user!.id, next));
+    persist('upsertCategory', user!.id, next);
   };
 
   // O que estava na categoria excluída passa para "Outros"
@@ -599,8 +742,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     const needsOthers = current.type === 'expense' && !remaining.some(c => c.name === 'Outros' && c.type === 'expense');
     const others: Category = { id: newId(), name: 'Outros', icon: '📁', type: 'expense' };
     setCategories(needsOthers ? [...remaining, others] : remaining);
-    persist(() => repo.deleteCategory(id));
-    if (needsOthers) persist(() => repo.upsertCategory(user!.id, others));
+    persist('deleteCategory', id);
+    if (needsOthers) persist('upsertCategory', user!.id, others);
   };
 
   const countTransactionsInCategory = (name: string) =>
@@ -655,11 +798,13 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     [transactions, subscriptionCharges, installments, goals]
   );
 
-  const getTotalDebtPayments = () => debts.reduce((sum, debt) => sum + debt.monthlyPayment, 0);
+  const getMonthlyDebtCommitment = () => debts.reduce((sum, debt) => sum + debt.monthlyPayment, 0);
+  /** Pagamentos de dívidas do mês de referência: pagos + ainda a vencer */
+  const getTotalDebtPayments = () => getDebtPaymentsForMonth(referenceMonth).total;
 
   const getHealth = (month = referenceMonth) => {
     const summary = getMonthSummary(month);
-    return computeHealth(summary.income, summary.expenses, getTotalDebtPayments());
+    return computeHealth(summary.income, summary.expenses, getDebtPaymentsForMonth(month).total);
   };
 
   const getBudgets = (month = referenceMonth) => {
@@ -720,10 +865,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       income: expectedIncome > 0 ? expectedIncome : base.income,
       habitualExpenses: habitualCash + habitualCard,
       committedExpenses,
-      debts: debts.map(d => ({
-        monthlyPayment: d.monthlyPayment,
-        remainingInstallments: Math.max(0, (d.totalInstallments ?? 0) - (d.installmentsPaid ?? 0)),
-      })),
+      debtPayments: month => getDebtPaymentsForMonth(month).total,
       plannedContributions: goals.filter(g => g.status === 'active').reduce((s, g) => s + (g.monthlyContribution || 0), 0),
     });
   };
@@ -741,6 +883,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const value: FinanceContextType = {
     syncState,
     syncError,
+    pendingSync,
     dismissSyncError: () => setSyncError(null),
     reload: () => {
       setSyncError(null);
@@ -764,7 +907,15 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     setInvoiceStatementAmount,
     setInvoicePaid,
     debts,
-    setDebts,
+    paidDebts,
+    debtPayments,
+    addDebt,
+    deleteDebt,
+    payDebtInstallment,
+    advanceDebtInstallments,
+    payOffDebt,
+    getMonthlyDebtCommitment,
+    getDebtPaymentsForMonth,
     subscriptions,
     saveSubscription,
     setSubscriptionStatus,

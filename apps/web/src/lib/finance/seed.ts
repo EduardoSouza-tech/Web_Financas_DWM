@@ -4,7 +4,7 @@
  */
 import { CREDIT_CARDS, CURRENT_MONTH_TRANSACTIONS, DEBTS } from '@/lib/mock-data';
 import { DEFAULT_CLOSING_DAY, addMonths, currentMonthKey, invoiceMonthOf } from './credit-card';
-import { dateInMonth, nextDateForDay, todayISO, type Goal, type Subscription } from './engine';
+import { addMonthsToDate, dateInMonth, todayISO, type DebtPayment, type Goal, type Subscription } from './engine';
 
 // Transações de assinatura do exemplo antigo: agora são geradas pelas assinaturas
 const SUBSCRIPTION_TX_IDS = new Set(['8', '9', '10', '11', '12']);
@@ -30,8 +30,25 @@ export function seedTransactions(profileId: string) {
   });
 }
 
-export function seedDebts(profileId: string) {
-  return DEBTS.map(debt => ({
+/** Dívidas de exemplo; a parcela deste mês que já venceu aparece como paga */
+export function seedDebts(profileId: string): { debts: any[]; payments: DebtPayment[] } {
+  const today = todayISO();
+  const payments: DebtPayment[] = [];
+  const debts = DEBTS.map(debt => {
+    const dueThisMonth = dateInMonth(currentMonthKey(), Number(debt.nextDueDate.slice(8, 10)));
+    const alreadyPaid = dueThisMonth < today;
+    if (alreadyPaid) {
+      payments.push({
+        id: `seed-pay-${debt.id}`,
+        profile_id: profileId,
+        debtId: debt.id,
+        date: dueThisMonth,
+        amount: debt.monthlyPayment,
+        installments: 1,
+        kind: 'installment',
+      });
+    }
+    return {
     id: debt.id,
     profile_id: profileId,
     name: debt.name,
@@ -42,10 +59,13 @@ export function seedDebts(profileId: string) {
     interestRate: debt.interestRate,
     installmentsPaid: debt.installmentsPaid,
     totalInstallments: debt.totalInstallments,
-    nextDueDate: nextDateForDay(Number(debt.nextDueDate.slice(8, 10))),
+    nextDueDate: alreadyPaid ? addMonthsToDate(dueThisMonth, 1) : dueThisMonth,
     creditor: debt.creditor,
     color: debt.color,
-  }));
+    status: 'active',
+    };
+  });
+  return { debts, payments };
 }
 
 export function seedSubscriptions(profileId: string): Subscription[] {

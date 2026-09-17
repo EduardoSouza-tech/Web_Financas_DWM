@@ -20,7 +20,7 @@ export function ProfileAvatar({ profile, size = 'md', className }: ProfileAvatar
     return (
       <div
         className={cn(
-          'flex items-center justify-center shrink-0 bg-gradient-to-br from-primary to-purple-900 text-white',
+          'flex items-center justify-center shrink-0 bg-gradient-to-br from-primary to-cyan-600 text-white',
           sizes[size],
           className
         )}

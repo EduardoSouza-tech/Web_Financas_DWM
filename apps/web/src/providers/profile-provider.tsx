@@ -7,8 +7,8 @@ import { useAuth } from '@/providers/auth-provider';
 export const FAMILY_PROFILE_ID = 'family';
 
 export const PROFILE_COLORS = [
-  '#8b5cf6', // roxo
   '#3b82f6', // azul
+  '#8b5cf6', // roxo
   '#10b981', // verde
   '#f59e0b', // laranja
   '#ef4444', // vermelho

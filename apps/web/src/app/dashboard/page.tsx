@@ -489,11 +489,11 @@ export default function DashboardPage() {
 
               {/* Recomendação Dinâmica */}
               {isInDeficit && debts.length > 0 && (
-                <div className="p-4 bg-blue-50 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800 rounded-lg">
-                  <h4 className="font-semibold text-blue-900 dark:text-blue-100 mb-2">
+                <div className="p-4 bg-cyan-50 dark:bg-cyan-950/10 border border-cyan-200 dark:border-cyan-800 rounded-lg">
+                  <h4 className="font-semibold text-cyan-900 dark:text-cyan-100 mb-2">
                     💡 Recomendação Urgente
                   </h4>
-                  <p className="text-sm text-blue-800 dark:text-blue-200">
+                  <p className="text-sm text-cyan-800 dark:text-cyan-200">
                     {(() => {
                       // Ordenar dívidas por taxa de juros (maior para menor)
                       const sortedDebts = [...debts].sort((a, b) => b.interestRate - a.interestRate);
@@ -590,7 +590,7 @@ export default function DashboardPage() {
                     initial={{ width: 0 }}
                     animate={{ width: `${category.percentage}%` }}
                     transition={{ duration: 1, delay: 0.1 * i }}
-                    className="h-full bg-gradient-to-r from-primary to-purple-600"
+                    className="h-full bg-gradient-to-r from-primary to-cyan-500"
                   />
                 </div>
               </div>
@@ -661,7 +661,7 @@ export default function DashboardPage() {
                 glass border-l-4
                 ${insight.type === 'success' ? 'border-l-green-500 bg-green-50/50 dark:bg-green-950/20' : ''}
                 ${insight.type === 'warning' ? 'border-l-orange-500 bg-orange-50/50 dark:bg-orange-950/20' : ''}
-                ${insight.type === 'info' ? 'border-l-blue-500 bg-blue-50/50 dark:bg-blue-950/20' : ''}
+                ${insight.type === 'info' ? 'border-l-cyan-500 bg-cyan-50/50 dark:bg-cyan-950/20' : ''}
                 ${insight.type === 'tip' ? 'border-l-purple-500 bg-purple-50/50 dark:bg-purple-950/20' : ''}
               `}>
                 <CardHeader className="pb-3">
@@ -681,7 +681,7 @@ export default function DashboardPage() {
                       p-2 rounded-lg text-xs font-medium
                       ${insight.type === 'success' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : ''}
                       ${insight.type === 'warning' ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300' : ''}
-                      ${insight.type === 'info' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' : ''}
+                      ${insight.type === 'info' ? 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300' : ''}
                       ${insight.type === 'tip' ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300' : ''}
                     `}>
                       💡 {insight.impact}
@@ -801,10 +801,10 @@ export default function DashboardPage() {
           </Card>
 
           {/* Assinaturas */}
-          <Card className="glass border-blue-500/20">
+          <Card className="glass border-cyan-500/20">
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
-                <Calendar className="h-4 w-4 text-blue-500" />
+                <Calendar className="h-4 w-4 text-cyan-500" />
                 Renovações
               </CardTitle>
             </CardHeader>
@@ -825,7 +825,7 @@ export default function DashboardPage() {
                   const days = daysUntil(sub.nextPayment);
                   
                   return (
-                    <div key={sub.id} className="p-3 bg-blue-50 dark:bg-blue-950/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                    <div key={sub.id} className="p-3 bg-cyan-50 dark:bg-cyan-950/20 rounded-lg border border-cyan-200 dark:border-cyan-800">
                       <div className="flex items-center justify-between mb-1">
                         <p className="font-medium text-sm">{sub.name}</p>
                         <Badge variant="info" className="text-xs">
@@ -835,7 +835,7 @@ export default function DashboardPage() {
                       <p className="text-xs text-muted-foreground mb-2">
                         {renewDate.toLocaleDateString('pt-BR')}
                       </p>
-                      <p className="font-bold text-blue-600">
+                      <p className="font-bold text-cyan-600">
                         {sub.amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}/{sub.frequency === 'monthly' ? 'mês' : 'ano'}
                       </p>
                     </div>
@@ -1020,7 +1020,7 @@ export default function DashboardPage() {
 
                   {/* Resultados */}
                   {(incomeBoost > 0 || expenseReduction > 0) && (
-                    <div className="p-4 bg-gradient-to-r from-primary/10 to-purple-500/10 rounded-lg border-2 border-primary/30">
+                    <div className="p-4 bg-gradient-to-r from-primary/10 to-cyan-500/10 rounded-lg border-2 border-primary/30">
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                         <div>
                           <p className="text-xs text-muted-foreground mb-1">Nova Renda</p>

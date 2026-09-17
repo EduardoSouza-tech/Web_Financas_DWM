@@ -209,7 +209,7 @@ export default function GoalsPage() {
                       </div>
                       <div className="h-2 rounded-full bg-secondary overflow-hidden">
                         <div
-                          className={`h-full ${isCompleted ? 'bg-green-500' : 'bg-gradient-to-r from-primary to-purple-600'}`}
+                          className={`h-full ${isCompleted ? 'bg-green-500' : 'bg-gradient-to-r from-primary to-cyan-500'}`}
                           style={{ width: `${percentage}%` }}
                         />
                       </div>

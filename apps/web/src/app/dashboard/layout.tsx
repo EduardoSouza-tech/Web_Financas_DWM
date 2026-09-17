@@ -82,7 +82,7 @@ export default function DashboardLayout({
         <div className="flex flex-col flex-grow border-r border-border bg-card/50 backdrop-blur-xl px-6 pb-4 overflow-y-auto">
           <div className="flex items-center h-20 shrink-0">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-purple-600 flex items-center justify-center">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-cyan-500 flex items-center justify-center">
                 <PiggyBank className="w-5 h-5 text-white" />
               </div>
               <div>
@@ -165,7 +165,7 @@ export default function DashboardLayout({
               <div className="flex flex-col h-full px-6 pb-4">
                 <div className="flex items-center h-20 shrink-0">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-purple-600 flex items-center justify-center">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-cyan-500 flex items-center justify-center">
                       <PiggyBank className="w-5 h-5 text-white" />
                     </div>
                     <div>

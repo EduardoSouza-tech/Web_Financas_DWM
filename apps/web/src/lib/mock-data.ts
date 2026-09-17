@@ -17,8 +17,9 @@ export const USER_DATA = {
 // TRANSAÇÕES DO MÊS ATUAL (NOVEMBRO 2025)
 // ============================================
 export const CURRENT_MONTH_TRANSACTIONS = [
-  // RECEITAS (Total: R$ 6.500)
+  // RECEITAS (Total: R$ 8.000)
   { id: '1', date: '2025-11-01', description: 'Salário', category: 'Salário', type: 'income', amount: 6500 },
+  { id: '1b', date: '2025-11-15', description: 'Bônus/Freelance', category: 'Renda Extra', type: 'income', amount: 1500 },
   
   // DESPESAS FIXAS (Total: R$ 2.025 - em dinheiro/débito)
   { id: '2', date: '2025-11-05', description: 'Aluguel', category: 'Moradia', type: 'expense', amount: 1200 },

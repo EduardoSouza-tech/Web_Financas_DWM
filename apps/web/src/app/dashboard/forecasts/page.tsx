@@ -38,6 +38,7 @@ import {
   PREDICTIVE_ALERTS,
   MONTHLY_SUMMARY 
 } from '@/lib/mock-data';
+import { useFinance } from '@/contexts/FinanceContext';
 
 interface ForecastData {
   month: string;
@@ -63,25 +64,32 @@ const scoreData: ScoreData[] = [
 ];
 
 export default function ForecastsPage() {
+  const { getTotalIncome, getTotalExpenses, getBalance, getTotalDebtPayments } = useFinance();
   const [forecastData] = useState<ForecastData[]>(FORECAST_DATA as ForecastData[]);
+  
+  // Calcular valores reais do contexto
+  const monthlyIncome = getTotalIncome();
+  const monthlyExpenses = getTotalExpenses();
+  const monthlyDebtPayments = getTotalDebtPayments();
+  const currentBalance = getBalance();
   
   // Simulador What-If
   const [incomeAdjustment, setIncomeAdjustment] = useState(0);
   const [expenseReduction, setExpenseReduction] = useState(0);
-  const [savingsIncrease, setSavingsIncrease] = useState(0);
+  const [debtReduction, setDebtReduction] = useState(0);
 
-  // KPIs baseados em dados reais
-  const currentBalance = MONTHLY_SUMMARY.balance;
+  // KPIs baseados em dados REAIS do contexto
   const projectedBalance6Months = FORECAST_DATA[5].saldoProjetado;
-  const projectedGrowth = ((projectedBalance6Months - currentBalance) / currentBalance) * 100;
+  const projectedGrowth = currentBalance > 0 ? ((projectedBalance6Months - currentBalance) / currentBalance) * 100 : 0;
   const potentialSavings = projectedBalance6Months - currentBalance;
   const financialScore = FINANCIAL_SCORE.total;
 
-  // Simulação What-If
-  const simulatedBalance = projectedBalance6Months + 
-    (incomeAdjustment * 6) - 
-    (expenseReduction * 6) + 
-    (savingsIncrease * 6);
+  // Simulação What-If - Usando valores reais
+  const whatIfIncome = monthlyIncome + incomeAdjustment;
+  const whatIfExpenses = monthlyExpenses - expenseReduction;
+  const whatIfDebts = monthlyDebtPayments - debtReduction;
+  const whatIfMonthlyBalance = whatIfIncome - whatIfExpenses - whatIfDebts;
+  const simulatedBalance = currentBalance + (whatIfMonthlyBalance * 6);
   const simulationImpact = simulatedBalance - projectedBalance6Months;
 
   // Alertas vindos dos dados centralizados
@@ -287,22 +295,22 @@ export default function ForecastsPage() {
                 />
               </div>
 
-              {/* Poupança */}
+              {/* Redução de Dívidas */}
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
-                  <label className="text-sm font-medium">Investimento Mensal Extra</label>
-                  <span className="text-sm font-bold text-purple-600">
-                    +{savingsIncrease.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                  <label className="text-sm font-medium">Redução de Pagamento de Dívidas</label>
+                  <span className="text-sm font-bold text-green-600">
+                    -{debtReduction.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                   </span>
                 </div>
                 <input
                   type="range"
                   min="0"
-                  max="1000"
-                  step="50"
-                  value={savingsIncrease}
-                  onChange={(e) => setSavingsIncrease(Number(e.target.value))}
-                  className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-purple-600"
+                  max="3000"
+                  step="100"
+                  value={debtReduction}
+                  onChange={(e) => setDebtReduction(Number(e.target.value))}
+                  className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-green-600"
                 />
               </div>
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, TrendingDown, DollarSign, Calendar, AlertTriangle, CheckCircle, X, Sparkles, TrendingUp, Trophy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -8,7 +8,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Input } from '@/components/ui/input';
-import { FINANCIAL_HEALTH } from '@/lib/mock-data';
+import { addAchievement } from '@/lib/finance/achievements';
+import { computeHealth, simulateDebtPayoff } from '@/lib/finance/health';
 import { useFinance } from '@/contexts/FinanceContext';
 
 interface Debt {
@@ -24,15 +25,6 @@ interface Debt {
   nextDueDate: string;
   creditor: string;
   color: string;
-}
-
-interface DebtAchievement {
-  id: string;
-  debtName: string;
-  amount: number;
-  paidAt: string;
-  monthlyPaymentFreed: number;
-  interestRate: number;
 }
 
 const mockDebts: Debt[] = [
@@ -81,14 +73,14 @@ const mockDebts: Debt[] = [
 ];
 
 export default function DebtsPage() {
-  const { debts, setDebts } = useFinance();
+  const { debts, setDebts, getTotalIncome, getTotalExpenses, getTotalDebtPayments } = useFinance();
+  const health = computeHealth(getTotalIncome(), getTotalExpenses(), getTotalDebtPayments());
   const [paidMessage, setPaidMessage] = useState<string | null>(null);
   const [selectedDebt, setSelectedDebt] = useState<Debt | null>(null);
   const [installmentsToAdvance, setInstallmentsToAdvance] = useState(1);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showPayOffModal, setShowPayOffModal] = useState(false);
   const [debtToPayOff, setDebtToPayOff] = useState<Debt | null>(null);
-  const [achievements, setAchievements] = useState<DebtAchievement[]>([]);
   const [debtForm, setDebtForm] = useState({
     name: '',
     type: 'loan' as 'loan' | 'financing' | 'credit' | 'other',
@@ -98,28 +90,9 @@ export default function DebtsPage() {
     creditor: ''
   });
 
-  // Carregar conquistas do localStorage
-  useEffect(() => {
-    const saved = localStorage.getItem('debtAchievements');
-    if (saved) {
-      setAchievements(JSON.parse(saved));
-    }
-  }, []);
-
-  // Salvar conquista
-  const saveAchievement = (debt: Debt) => {
-    const achievement: DebtAchievement = {
-      id: `achievement-${Date.now()}`,
-      debtName: debt.name,
-      amount: debt.remainingAmount,
-      paidAt: new Date().toISOString(),
-      monthlyPaymentFreed: debt.monthlyPayment,
-      interestRate: debt.interestRate
-    };
-    
-    const newAchievements = [...achievements, achievement];
-    setAchievements(newAchievements);
-    localStorage.setItem('debtAchievements', JSON.stringify(newAchievements));
+  // Registra a quitação nas conquistas (aparecem no Overview)
+  const saveAchievement = (debt: any, amountPaid?: number) => {
+    addAchievement(debt, amountPaid);
   };
 
   const handlePayOffDebt = (debtId: string) => {
@@ -133,15 +106,14 @@ export default function DebtsPage() {
   const confirmPayOff = () => {
     if (!debtToPayOff) return;
 
-    // Salvar conquista
+    // Remove a dívida PRIMEIRO
+    const updatedDebts = debts.filter(d => d.id !== debtToPayOff.id);
+    setDebts(updatedDebts);
+
+    // DEPOIS salva a conquista (só se a dívida foi realmente removida)
     saveAchievement(debtToPayOff);
 
     setPaidMessage(`🎉 Parabéns! Dívida "${debtToPayOff.name}" quitada totalmente! Você liberou ${debtToPayOff.monthlyPayment.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}/mês!`);
-    
-    // Remove a dívida após 300ms (tempo da animação)
-    setTimeout(() => {
-      setDebts(debts.filter(d => d.id !== debtToPayOff.id));
-    }, 300);
 
     // Remove a mensagem após 8 segundos
     setTimeout(() => {
@@ -164,9 +136,8 @@ export default function DebtsPage() {
     if (newRemainingAmount <= 0 || newInstallmentsPaid >= selectedDebt.totalInstallments) {
       // Quitou totalmente
       setPaidMessage(`✅ Você adiantou ${actualInstallments} parcela(s) de "${selectedDebt.name}" e QUITOU a dívida! 🎉`);
-      setTimeout(() => {
-        setDebts(debts.filter(d => d.id !== selectedDebt.id));
-      }, 300);
+      setDebts(debts.filter(d => d.id !== selectedDebt.id));
+      saveAchievement(selectedDebt, selectedDebt.remainingAmount);
     } else {
       // Adianto parcial
       setPaidMessage(`✅ Você adiantou ${actualInstallments} parcela(s) de "${selectedDebt.name}" (${amountPaid.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })})`);
@@ -759,25 +730,24 @@ export default function DebtsPage() {
 
                     {/* Novo saldo disponível */}
                     {(() => {
-                      const simulation = FINANCIAL_HEALTH.simulateDebtPayoff(debtToPayOff.id);
-                      if (!simulation) return null;
+                      const simulation = simulateDebtPayoff(health, debtToPayOff.monthlyPayment);
 
                       return (
                         <div className="space-y-2">
                           <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
                             <span className="text-sm">Saldo atual mensal</span>
-                            <span className={`font-bold ${FINANCIAL_HEALTH.isInDeficit ? 'text-red-600' : 'text-green-600'}`}>
-                              {FINANCIAL_HEALTH.availableAfterDebts.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                            <span className={`font-bold ${health.isInDeficit ? 'text-red-600' : 'text-green-600'}`}>
+                              {health.availableAfterDebts.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                             </span>
                           </div>
                           <div className="flex items-center justify-between p-3 bg-primary/10 rounded-lg border-2 border-primary">
                             <span className="text-sm font-semibold">Novo saldo mensal</span>
                             <span className={`font-bold text-lg ${simulation.willBePositive ? 'text-green-600' : 'text-orange-600'}`}>
-                              {simulation.newAvailable.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                              {simulation.availableAfterDebts.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                             </span>
                           </div>
                           
-                          {simulation.willBePositive && FINANCIAL_HEALTH.isInDeficit && (
+                          {simulation.leavesDeficit && (
                             <div className="p-3 bg-green-100 dark:bg-green-900/30 rounded-lg border border-green-300 dark:border-green-700">
                               <p className="text-sm font-semibold text-green-700 dark:text-green-300 flex items-center gap-2">
                                 <Sparkles className="w-4 h-4" />
@@ -789,7 +759,7 @@ export default function DebtsPage() {
                           {!simulation.willBePositive && (
                             <div className="p-3 bg-orange-100 dark:bg-orange-900/30 rounded-lg border border-orange-300 dark:border-orange-700">
                               <p className="text-xs text-orange-700 dark:text-orange-300">
-                                Ainda faltarão {Math.abs(simulation.newAvailable).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} para equilibrar
+                                Ainda faltarão {Math.abs(simulation.availableAfterDebts).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} para equilibrar
                               </p>
                             </div>
                           )}
@@ -798,13 +768,13 @@ export default function DebtsPage() {
                             <div className="p-2 bg-muted rounded">
                               <p className="text-muted-foreground">Comprometimento</p>
                               <p className="font-semibold">
-                                {FINANCIAL_HEALTH.debtCommitmentPercentage.toFixed(1)}% → {simulation.newDebtCommitment.toFixed(1)}%
+                                {health.debtCommitmentPercentage.toFixed(1)}% → {simulation.debtCommitmentPercentage.toFixed(1)}%
                               </p>
                             </div>
                             <div className="p-2 bg-muted rounded">
                               <p className="text-muted-foreground">Taxa de poupança</p>
                               <p className="font-semibold">
-                                {FINANCIAL_HEALTH.realSavingsRate.toFixed(1)}% → {simulation.newSavingsRate.toFixed(1)}%
+                                {health.realSavingsRate.toFixed(1)}% → {simulation.realSavingsRate.toFixed(1)}%
                               </p>
                             </div>
                           </div>

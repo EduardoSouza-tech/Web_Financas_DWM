@@ -70,6 +70,10 @@ interface FinanceContextType {
   setInvoiceStatementAmount: (profileId: string | undefined, cardId: string, month: MonthKey, amount?: number) => void;
   setInvoicePaid: (profileId: string | undefined, cardId: string, month: MonthKey, paid: boolean) => void;
   getTotalIncome: () => number;
+  /** Despesas do mês de referência por categoria (cartão pela parcela da fatura) */
+  getExpensesByCategory: () => Record<string, number>;
+  /** Quantas transações (de todos os perfis) usam a categoria */
+  countTransactionsInCategory: (name: string) => number;
   cards: any[];
   setCards: (cards: any[]) => void;
   transactions: any[];
@@ -297,14 +301,46 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     setCategories(prev => [...prev, newCategory]);
   };
 
+  // Transações guardam o NOME da categoria: renomear ou excluir precisa refletir nelas,
+  // senão os gastos somem das análises por categoria.
+  const renameTransactionsCategory = (from: string, to: string) =>
+    setAllTransactions(prev => prev.map(tx => (tx.category === from ? { ...tx, category: to } : tx)));
+
   const updateCategory = (id: string, updates: Partial<Category>) => {
+    const current = categories.find(cat => cat.id === id);
+    const newName = updates.name?.trim();
+    if (current && newName && newName !== current.name) {
+      renameTransactionsCategory(current.name, newName);
+    }
     setCategories(prev =>
-      prev.map(cat => (cat.id === id ? { ...cat, ...updates } : cat))
+      prev.map(cat => (cat.id === id ? { ...cat, ...updates, ...(newName ? { name: newName } : {}) } : cat))
     );
   };
 
+  // Transações da categoria excluída passam para "Outros"
   const deleteCategory = (id: string) => {
-    setCategories(prev => prev.filter(cat => cat.id !== id));
+    const current = categories.find(cat => cat.id === id);
+    if (current) renameTransactionsCategory(current.name, 'Outros');
+    setCategories(prev => {
+      const next = prev.filter(cat => cat.id !== id);
+      const needsOthers = current?.type === 'expense' && !next.some(c => c.name === 'Outros' && c.type === 'expense');
+      return needsOthers ? [...next, { id: Date.now().toString(), name: 'Outros', icon: '📁', type: 'expense' }] : next;
+    });
+  };
+
+  const countTransactionsInCategory = (name: string) =>
+    allTransactions.filter(tx => tx.category === name).length;
+
+  const getExpensesByCategory = () => {
+    const totals: Record<string, number> = {};
+    const add = (category: string, amount: number) => {
+      totals[category] = (totals[category] ?? 0) + amount;
+    };
+    transactions
+      .filter(tx => tx.type === 'expense' && !isCardTransaction(tx) && monthOfDate(tx.date) === referenceMonth)
+      .forEach(tx => add(tx.category, tx.amount));
+    installments.filter(i => i.invoiceMonth === referenceMonth).forEach(i => add(i.category, i.amount));
+    return totals;
   };
 
   const getTotalCardUsage = () => {
@@ -364,6 +400,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     setInvoiceStatementAmount,
     setInvoicePaid,
     getTotalIncome,
+    getExpensesByCategory,
+    countTransactionsInCategory,
     cards,
     setCards,
     transactions,

@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 
 interface GoalFormProps {
+  goal?: any
   onClose: () => void
   onSubmit: (goal: any) => void
 }
@@ -22,16 +23,16 @@ const goalTypes = [
 
 const icons = ['🛡️', '✈️', '💻', '🚗', '🏠', '📚', '💰', '🎮', '🏋️', '🎸', '📷', '🎨']
 
-export default function GoalForm({ onClose, onSubmit }: GoalFormProps) {
+export default function GoalForm({ goal, onClose, onSubmit }: GoalFormProps) {
   const [formData, setFormData] = useState({
-    name: '',
-    icon: '🎯',
-    type: 'other' as const,
-    targetAmount: '',
-    currentAmount: '0',
-    deadline: '',
-    monthlyContribution: '',
-    autoContribute: true,
+    name: goal?.name || '',
+    icon: goal?.icon || '🎯',
+    type: goal?.type || 'other',
+    targetAmount: goal?.targetAmount?.toString() || '',
+    currentAmount: goal?.currentAmount?.toString() || '0',
+    deadline: goal?.deadline || '',
+    monthlyContribution: goal?.monthlyContribution?.toString() || '',
+    autoContribute: goal?.autoContribute !== undefined ? goal.autoContribute : true,
   })
 
   const [showIconPicker, setShowIconPicker] = useState(false)
@@ -98,9 +99,9 @@ export default function GoalForm({ onClose, onSubmit }: GoalFormProps) {
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h2 className="text-2xl font-bold">Nova Meta</h2>
+            <h2 className="text-2xl font-bold">{goal ? 'Editar Meta' : 'Nova Meta'}</h2>
             <p className="text-sm text-muted-foreground mt-1">
-              Defina um objetivo financeiro para alcançar
+              {goal ? 'Atualize os detalhes da sua meta' : 'Defina um objetivo financeiro para alcançar'}
             </p>
           </div>
           <Button

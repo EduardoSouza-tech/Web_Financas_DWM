@@ -12,7 +12,9 @@ import {
   CheckCircle2,
   AlertCircle,
   Play,
-  Pause
+  Pause,
+  Edit,
+  Trash2
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -205,6 +207,22 @@ export default function GoalsPage() {
       status: 'active' as const,
     }
     setGoals(prev => [newGoal, ...prev])
+  }
+
+  const handleEditGoal = (goal: any) => {
+    setGoals(prev => prev.map(g => 
+      g.goalId === selectedGoal?.goalId 
+        ? { ...g, ...goal, goalId: g.goalId, status: g.status, createdAt: g.createdAt }
+        : g
+    ))
+    setSelectedGoal(null)
+    setShowAddModal(false)
+  }
+
+  const handleDeleteGoal = (goalId: string) => {
+    if (confirm('Tem certeza que deseja excluir esta meta?')) {
+      setGoals(prev => prev.filter(g => g.goalId !== goalId))
+    }
   }
 
   return (
@@ -474,15 +492,65 @@ export default function GoalsPage() {
                       </div>
                     )}
 
-                    {/* Action Button */}
+                    {/* Action Buttons */}
                     {!isCompleted && goal.status === 'active' && (
-                      <Button
-                        className="w-full gap-2"
-                        onClick={() => handleContribute(goal)}
-                      >
-                        <Plus className="w-4 h-4" />
-                        Adicionar Aporte
-                      </Button>
+                      <div className="space-y-2">
+                        <Button
+                          className="w-full gap-2"
+                          onClick={() => handleContribute(goal)}
+                        >
+                          <Plus className="w-4 h-4" />
+                          Adicionar Aporte
+                        </Button>
+                        <div className="grid grid-cols-2 gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-2"
+                            onClick={() => {
+                              setSelectedGoal(goal)
+                              setShowAddModal(true)
+                            }}
+                          >
+                            <Edit className="w-3 h-3" />
+                            Editar
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-2 text-red-600 hover:text-red-700 hover:bg-red-50"
+                            onClick={() => handleDeleteGoal(goal.goalId)}
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            Excluir
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                    {!isCompleted && goal.status === 'paused' && (
+                      <div className="grid grid-cols-2 gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-2"
+                          onClick={() => {
+                            setSelectedGoal(goal)
+                            setShowAddModal(true)
+                          }}
+                        >
+                          <Edit className="w-3 h-3" />
+                          Editar
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-2 text-red-600 hover:text-red-700 hover:bg-red-50"
+                          onClick={() => handleDeleteGoal(goal.goalId)}
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          Excluir
+                        </Button>
+                      </div>
                     )}
                   </CardContent>
                 </Card>
@@ -492,11 +560,15 @@ export default function GoalsPage() {
         </motion.div>
       )}
 
-      {/* Add Goal Modal */}
+      {/* Add/Edit Goal Modal */}
       {showAddModal && (
         <GoalForm
-          onClose={() => setShowAddModal(false)}
-          onSubmit={handleAddGoal}
+          goal={selectedGoal}
+          onClose={() => {
+            setShowAddModal(false)
+            setSelectedGoal(null)
+          }}
+          onSubmit={selectedGoal ? handleEditGoal : handleAddGoal}
         />
       )}
 

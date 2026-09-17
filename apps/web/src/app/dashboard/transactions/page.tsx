@@ -79,7 +79,22 @@ export default function TransactionsPage() {
   const expenses = getTotalExpenses()
   const invoiceInstallments = getInstallmentsForInvoice(referenceMonth)
   const invoiceTotal = invoiceInstallments.reduce((sum, i) => sum + i.amount, 0)
-  const usedCategories = Array.from(new Set(monthTransactions.map(tx => tx.category))).sort()
+  const usedCategories = Array.from(
+    new Set([...monthTransactions.map(tx => tx.category), ...invoiceInstallments.map(i => i.category)])
+  ).sort()
+
+  // Parcelas (e assinaturas no cartão) que caem na fatura do mês, inclusive de compras feitas em meses anteriores
+  const filteredInstallments =
+    filterType === 'income' || filterPayment === 'cash'
+      ? []
+      : invoiceInstallments
+          .filter(i => filterCategory === 'all' || i.category === filterCategory)
+          .filter(i => {
+            if (!searchTerm) return true
+            const term = searchTerm.toLowerCase()
+            return i.description.toLowerCase().includes(term) || i.category.toLowerCase().includes(term)
+          })
+          .sort((a, b) => a.purchaseDate.localeCompare(b.purchaseDate))
 
   const handleDelete = async (tx: Transaction) => {
     const parcelas = isCardTransaction(tx) && (tx.installments ?? 1) > 1
@@ -191,15 +206,21 @@ export default function TransactionsPage() {
         <CardHeader>
           <CardTitle>Movimentações de {formatMonth(referenceMonth)}</CardTitle>
           <p className="text-sm text-muted-foreground">
-            Compras no cartão aparecem na data da compra; nas análises, contam parcela a parcela no mês da fatura.
+            Lançamentos feitos neste mês. Compras no cartão aparecem aqui na data da compra, com o valor total; as parcelas de cada mês estão logo abaixo.
           </p>
         </CardHeader>
         <CardContent>
           {filtered.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
-              <p>Nenhuma transação neste mês</p>
-            </div>
+            filteredInstallments.length > 0 ? (
+              <p className="py-4 text-center text-sm text-muted-foreground">
+                Nenhum lançamento feito neste mês. As parcelas que caem na fatura estão logo abaixo.
+              </p>
+            ) : (
+              <div className="text-center py-12 text-muted-foreground">
+                <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                <p>Nenhuma transação neste mês</p>
+              </div>
+            )
           ) : (
             <div className="space-y-2">
               {filtered.map(tx => {
@@ -266,6 +287,71 @@ export default function TransactionsPage() {
               })}
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      <Card className="glass">
+        <CardHeader>
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <CreditCard className="w-5 h-5" /> Parcelas no cartão em {formatMonth(referenceMonth)}
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                O que cai na fatura deste mês, inclusive parcelas de compras feitas em meses anteriores.
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-xs text-muted-foreground">Total da fatura</p>
+              <p className="text-lg font-bold text-red-500">{formatCurrency(invoiceTotal)}</p>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {filteredInstallments.length === 0 ? (
+            <p className="text-center py-6 text-sm text-muted-foreground">
+              {invoiceInstallments.length === 0 ? 'Nenhuma parcela na fatura deste mês.' : 'Nenhuma parcela com os filtros atuais.'}
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {filteredInstallments.map(i => {
+                const subscription = i.source === 'subscription'
+                return (
+                  <div key={i.key} className="flex items-center justify-between gap-3 p-4 rounded-lg border">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-11 h-11 shrink-0 rounded-full flex items-center justify-center text-xl bg-red-500/20">
+                        {iconOf(i.category)}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-medium truncate">{i.description}</p>
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1 text-sm text-muted-foreground">
+                          <span>{i.category}</span>
+                          <span>•</span>
+                          <span className="flex items-center gap-1">
+                            <CreditCard className="w-3 h-3" /> {cardName(i.cardId)}
+                          </span>
+                          {subscription ? (
+                            <Badge variant="outline" className="text-xs">assinatura</Badge>
+                          ) : i.total > 1 ? (
+                            <Badge variant="outline" className="text-xs">parcela {i.number}/{i.total}</Badge>
+                          ) : null}
+                          <span className="flex items-center gap-1">
+                            <Calendar className="w-3 h-3" /> {subscription ? 'cobrada em' : 'compra em'} {formatDateBR(i.purchaseDate)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <p className="text-lg font-bold whitespace-nowrap text-red-500">- {formatCurrency(i.amount)}</p>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+          <div className="mt-4 text-right">
+            <Link href="/dashboard/conciliacao" className="text-sm text-primary hover:underline">
+              Conferir na conciliação →
+            </Link>
+          </div>
         </CardContent>
       </Card>
 

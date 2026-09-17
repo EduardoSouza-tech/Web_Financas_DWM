@@ -1,266 +1,180 @@
 'use client';
 
 import { useState } from 'react';
-import { useAuth } from '@/providers/auth-provider';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { motion } from 'framer-motion';
-import { Mail, Lock, User, ArrowRight, TrendingUp, Shield, Zap, Heart, AlertCircle } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { motion, useReducedMotion } from 'framer-motion';
+import { AlertCircle, ArrowRight, CheckCircle2, Loader2, Lock, Mail, MailCheck, User, WifiOff } from 'lucide-react';
+import { useAuth } from '@/providers/auth-provider';
+import { AuthInput, AuthShell, ButtonShine, authButtonClass } from '@/components/auth/auth-shell';
+
+const MIN_PASSWORD = 6;
 
 export default function SignupPage() {
   const router = useRouter();
-  const { signUp } = useAuth();
+  const { signUp, offlineMode } = useAuth();
+  const reduceMotion = useReducedMotion();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState(false);
-  const [needsConfirmation, setNeedsConfirmation] = useState(false);
+  const [status, setStatus] = useState<'form' | 'confirm-email' | 'created'>('form');
 
-  // Verificar se Supabase está configurado
-  const supabaseConfigured = 
-    process.env.NEXT_PUBLIC_SUPABASE_URL &&
-    !process.env.NEXT_PUBLIC_SUPABASE_URL.includes('xyzcompany') &&
-    !process.env.NEXT_PUBLIC_SUPABASE_URL.includes('placeholder');
+  const passwordOk = password.length >= MIN_PASSWORD;
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
     setError('');
-
-    if (password.length < 6) {
-      setError('A senha deve ter pelo menos 6 caracteres');
-      setLoading(false);
+    if (!passwordOk) {
+      setError(`A senha precisa ter pelo menos ${MIN_PASSWORD} caracteres.`);
       return;
     }
-
+    setLoading(true);
     try {
-      const { needsEmailConfirmation } = await signUp(email, password, name);
-      setSuccess(true);
+      const { needsEmailConfirmation } = await signUp(email.trim(), password, name.trim());
       if (needsEmailConfirmation) {
         // Sem sessão até confirmar o e-mail: não adianta ir para os perfis
-        setNeedsConfirmation(true);
-        return;
+        setStatus('confirm-email');
+      } else {
+        setStatus('created');
+        setTimeout(() => router.push('/profiles'), 1500);
       }
-      setTimeout(() => {
-        router.push('/profiles');
-      }, 2000);
-    } catch (error: any) {
-      setError(error.message || 'Erro ao criar conta');
+    } catch (err: any) {
+      setError(err?.message || 'Não foi possível criar a conta. Tente novamente.');
     } finally {
       setLoading(false);
     }
   };
 
-  const benefits = [
-    { icon: Shield, text: 'Seus dados seguros e criptografados' },
-    { icon: Zap, text: 'Configuração rápida em menos de 1 minuto' },
-    { icon: Heart, text: 'Gratuito para sempre' },
-  ];
+  if (status !== 'form') {
+    const confirm = status === 'confirm-email';
+    return (
+      <AuthShell>
+        <motion.div
+          initial={reduceMotion ? false : { opacity: 0, scale: 0.96 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="flex flex-col items-center py-4 text-center"
+        >
+          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-500 shadow-lg shadow-blue-500/30">
+            {confirm ? <MailCheck className="h-8 w-8 text-white" /> : <CheckCircle2 className="h-8 w-8 text-white" />}
+          </div>
+          <h2 className="mt-6 text-2xl font-bold tracking-tight">{confirm ? 'Confirme seu e-mail' : 'Conta criada!'}</h2>
+          {confirm ? (
+            <>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Enviamos um link de confirmação para <strong className="text-foreground">{email}</strong>. Abra o e-mail, clique no
+                link e depois entre com sua senha.
+              </p>
+              <p className="mt-4 text-xs text-muted-foreground">Não chegou? Veja a caixa de spam ou promoções.</p>
+              <Link href="/login" className={`${authButtonClass} mt-8`}>
+                <ButtonShine />
+                Ir para o login <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+              </Link>
+            </>
+          ) : (
+            <p className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Preparando seus perfis...
+            </p>
+          )}
+        </motion.div>
+      </AuthShell>
+    );
+  }
 
   return (
-    <div className="min-h-screen flex">
-      {/* Lado esquerdo - Features */}
-      <div className="hidden lg:flex flex-1 bg-gradient-to-br from-emerald-600 via-teal-600 to-cyan-600 p-12 items-center justify-center">
-        <div className="max-w-md">
-          <motion.div
-            initial={{ scale: 0 }}
-            animate={{ scale: 1 }}
-            transition={{ type: 'spring', stiffness: 200 }}
-            className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-white/20 backdrop-blur-sm mb-6"
-          >
-            <TrendingUp className="w-8 h-8 text-white" />
-          </motion.div>
-          <motion.h2
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 0.2 }}
-            className="text-4xl font-bold text-white mb-6"
-          >
-            Comece a transformar suas finanças hoje
-          </motion.h2>
-          <motion.p
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 0.3 }}
-            className="text-emerald-100 text-lg mb-8"
-          >
-            Junte-se a milhares de pessoas que já estão no controle do seu dinheiro.
-          </motion.p>
-          <div className="space-y-4">
-            {benefits.map((benefit, index) => (
-              <motion.div
-                key={index}
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 0.4 + index * 0.1 }}
-                className="flex items-center gap-3 text-white"
-              >
-                <div className="w-10 h-10 rounded-lg bg-white/20 backdrop-blur-sm flex items-center justify-center">
-                  <benefit.icon className="w-5 h-5" />
-                </div>
-                <span className="text-white/90">{benefit.text}</span>
-              </motion.div>
-            ))}
-          </div>
+    <AuthShell>
+      <div>
+        <h2 className="text-2xl font-bold tracking-tight">Criar conta</h2>
+        <p className="mt-1 text-sm text-muted-foreground">Leva menos de um minuto. Depois é só criar os perfis da família.</p>
+      </div>
+
+      {offlineMode && (
+        <div className="mt-6 flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
+          <WifiOff className="h-4 w-4 shrink-0" />
+          Modo demonstração: os dados ficam só neste navegador.
         </div>
-      </div>
+      )}
 
-      {/* Lado direito - Formulário */}
-      <div className="flex-1 flex items-center justify-center p-8 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="w-full max-w-md"
-        >
-          {/* Logo e Título */}
-          <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold text-white mb-2">
-              Criar conta
-            </h1>
-            <p className="text-slate-400">
-              Preencha seus dados para começar
-            </p>
-          </div>
+      <form onSubmit={handleSignup} className="mt-8 space-y-5" noValidate>
+        <AuthInput
+          id="name"
+          label="Nome"
+          icon={User}
+          type="text"
+          autoComplete="name"
+          required
+          value={name}
+          onChange={e => setName(e.target.value)}
+          placeholder="Como quer ser chamado"
+        />
 
-          {/* Formulário */}
-          <form onSubmit={handleSignup} className="space-y-6">
-            {!supabaseConfigured && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                className="p-4 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-sm"
-              >
-                <div className="flex gap-2 items-start">
-                  <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
-                  <div>
-                    <p className="font-semibold mb-1">⚠️ Configure o Supabase primeiro</p>
-                    <p className="text-xs text-amber-300/80">
-                      Leia <strong>COMO_CONFIGURAR.md</strong> ou <strong>QUICK_START.md</strong>
-                    </p>
-                  </div>
-                </div>
-              </motion.div>
-            )}
+        <AuthInput
+          id="email"
+          label="E-mail"
+          icon={Mail}
+          type="email"
+          autoComplete="email"
+          inputMode="email"
+          required
+          value={email}
+          onChange={e => setEmail(e.target.value)}
+          placeholder="voce@email.com"
+        />
 
-            {error && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                className="p-4 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm"
-              >
-                {error}
-              </motion.div>
-            )}
-
-            {success && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                className="p-4 rounded-lg bg-green-500/10 border border-green-500/20 text-green-400 text-sm"
-              >
-                {needsConfirmation
-                  ? `Conta criada! Enviamos um link de confirmação para ${email}. Confirme e depois faça login.`
-                  : 'Conta criada com sucesso! Redirecionando...'}
-              </motion.div>
-            )}
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">
-                  Nome completo
-                </label>
-                <div className="relative">
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
-                  <input
-                    type="text"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    required
-                    placeholder="Seu nome"
-                    className="w-full pl-10 pr-4 py-3 bg-slate-800/50 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">
-                  Email
-                </label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                    placeholder="seu@email.com"
-                    className="w-full pl-10 pr-4 py-3 bg-slate-800/50 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">
-                  Senha
-                </label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    placeholder="Mínimo 6 caracteres"
-                    className="w-full pl-10 pr-4 py-3 bg-slate-800/50 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading || success}
-              className="w-full py-3 px-4 bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-lg font-medium hover:from-emerald-600 hover:to-teal-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 focus:ring-offset-slate-900 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 group"
-            >
-              {loading ? (
-                'Criando conta...'
-              ) : success ? (
-                'Conta criada!'
-              ) : (
-                <>
-                  Criar conta
-                  <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition" />
-                </>
-              )}
-            </button>
-
-            <div className="text-center">
-              <p className="text-slate-400 text-sm">
-                Já tem uma conta?{' '}
-                <Link
-                  href="/login"
-                  className="text-emerald-400 hover:text-emerald-300 font-medium transition"
-                >
-                  Fazer login
-                </Link>
+        <AuthInput
+          id="password"
+          label="Senha"
+          icon={Lock}
+          password
+          autoComplete="new-password"
+          required
+          value={password}
+          onChange={e => setPassword(e.target.value)}
+          placeholder={`Mínimo ${MIN_PASSWORD} caracteres`}
+          hint={
+            password.length > 0 && (
+              <p className={`flex items-center gap-1.5 text-xs ${passwordOk ? 'text-green-500' : 'text-muted-foreground'}`}>
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                {passwordOk ? 'Tamanho mínimo atingido' : `Faltam ${MIN_PASSWORD - password.length} caracteres`}
               </p>
-            </div>
+            )
+          }
+        />
 
-            <p className="text-xs text-slate-500 text-center">
-              Ao criar uma conta, você concorda com nossos{' '}
-              <a href="#" className="text-slate-400 hover:text-slate-300 underline">
-                Termos de Uso
-              </a>{' '}
-              e{' '}
-              <a href="#" className="text-slate-400 hover:text-slate-300 underline">
-                Política de Privacidade
-              </a>
-            </p>
-          </form>
-        </motion.div>
-      </div>
-    </div>
+        <div aria-live="polite">
+          {error && (
+            <motion.div
+              initial={reduceMotion ? false : { opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="flex items-start gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2.5 text-sm text-red-600 dark:text-red-400"
+            >
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              {error}
+            </motion.div>
+          )}
+        </div>
+
+        <button type="submit" disabled={loading || !name.trim() || !email || !password} className={authButtonClass}>
+          <ButtonShine />
+          {loading ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" /> Criando conta...
+            </>
+          ) : (
+            <>
+              Criar conta <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+            </>
+          )}
+        </button>
+      </form>
+
+      <p className="mt-8 text-center text-sm text-muted-foreground">
+        Já tem conta?{' '}
+        <Link href="/login" className="font-semibold text-blue-500 transition hover:text-cyan-400">
+          Entrar
+        </Link>
+      </p>
+    </AuthShell>
   );
 }

@@ -164,6 +164,21 @@ interface FinanceContextType {
   paidDebts: any[];
   debtPayments: DebtPayment[];
   addDebt: (debt: any) => void;
+  /** Edita uma dívida já cadastrada, mantendo o que já foi pago */
+  updateDebt: (
+    id: string,
+    patch: {
+      name: string;
+      type: string;
+      creditor: string;
+      interestRate: number;
+      monthlyPayment: number;
+      totalInstallments: number;
+      installmentsPaid: number;
+      nextDueDate: string;
+    },
+    splits: { profile_id: string; amount: number }[]
+  ) => void;
   deleteDebt: (id: string) => void;
   /** Paga a parcela do mês: avança o vencimento */
   payDebtInstallment: (id: string, date?: string) => void;
@@ -636,15 +651,65 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       return;
     }
     // A dívida e as partes vão juntas: as partes dependem da linha da dívida existir
+    // As parcelas pagas antes do cadastro já foram quitadas por todos
     const shares: DebtShare[] = splits.map((split: { profile_id: string; amount: number }) => ({
       id: newId('share'),
       debtId: id,
       profile_id: split.profile_id,
       shareAmount: split.amount,
-      installmentsPaid: 0,
+      installmentsPaid: record.installmentsPaid ?? 0,
     }));
     setDebtShares(prev => [...prev, ...shares]);
     persist('upsertDebtWithShares', user!.id, record, shares);
+  };
+
+  /**
+   * Edita uma dívida já cadastrada (o valor da parcela mudou, o prazo mudou, etc.).
+   * O progresso é mantido; total e saldo são recalculados pela mesma regra do cadastro.
+   */
+  const updateDebt = (
+    id: string,
+    patch: {
+      name: string;
+      type: string;
+      creditor: string;
+      interestRate: number;
+      monthlyPayment: number;
+      totalInstallments: number;
+      installmentsPaid: number;
+      nextDueDate: string;
+    },
+    splits: { profile_id: string; amount: number }[]
+  ) => {
+    const debt = allDebts.find(d => d.id === id);
+    if (!debt) return;
+
+    const round2 = (n: number) => Math.round(n * 100) / 100;
+    const installmentsPaid = Math.min(Math.max(0, patch.installmentsPaid), patch.totalInstallments);
+    const totalAmount = round2(patch.monthlyPayment * patch.totalInstallments);
+    const remainingAmount = Math.max(0, round2(totalAmount - patch.monthlyPayment * installmentsPaid));
+    const next = finishIfDone({ ...debt, ...patch, installmentsPaid, totalAmount, remainingAmount });
+    saveDebt(next);
+
+    // Divisão: quem continua mantém o que já pagou, quem saiu perde a parte
+    const current = debtShares.filter(share => share.debtId === id);
+    const removed = current.filter(share => !splits.some(split => split.profile_id === share.profile_id));
+    const updated: DebtShare[] = splits.map(split => {
+      const existing = current.find(share => share.profile_id === split.profile_id);
+      // Cada parte fica em dia com a dívida ou uma parcela à frente (pagou e espera os outros)
+      const paid = existing?.installmentsPaid ?? installmentsPaid;
+      return {
+        id: existing?.id ?? newId('share'),
+        debtId: id,
+        profile_id: split.profile_id,
+        shareAmount: split.amount,
+        installmentsPaid: Math.min(Math.max(paid, installmentsPaid), installmentsPaid + 1),
+      };
+    });
+
+    setDebtShares(prev => [...prev.filter(share => share.debtId !== id), ...updated]);
+    removed.forEach(share => persist('deleteDebtShare', share.id));
+    updated.forEach(share => persist('upsertDebtShare', user!.id, share));
   };
 
   // Excluir = lançamento errado: some a dívida, os pagamentos (cascata no banco) e a conquista dela.
@@ -1126,6 +1191,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     paidDebts,
     debtPayments,
     addDebt,
+    updateDebt,
     deleteDebt,
     payDebtInstallment,
     advanceDebtInstallments,

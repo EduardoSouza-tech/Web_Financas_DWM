@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, TrendingDown, DollarSign, Calendar, AlertTriangle, CheckCircle, X, Sparkles, TrendingUp, Trophy, Users } from 'lucide-react';
+import { Plus, TrendingDown, DollarSign, Calendar, AlertTriangle, CheckCircle, X, Sparkles, TrendingUp, Trophy, Users, Pencil } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -38,6 +38,7 @@ export default function DebtsPage() {
     paidDebts,
     debtPayments,
     addDebt,
+    updateDebt,
     debtShares,
     payDebtShare,
     deleteDebt,
@@ -58,6 +59,8 @@ export default function DebtsPage() {
   const [showPayOffModal, setShowPayOffModal] = useState(false);
   const [debtToPayOff, setDebtToPayOff] = useState<Debt | null>(null);
   const [amountMode, setAmountMode] = useState<'installment' | 'total'>('installment');
+  /** Dívida sendo editada; null = cadastro novo */
+  const [editingDebt, setEditingDebt] = useState<Debt | null>(null);
   useEffect(() => {
     try {
       const saved = localStorage.getItem('debt_amount_mode');
@@ -168,6 +171,60 @@ export default function DebtsPage() {
     setTimeout(() => setPaidMessage(null), 5000)
   }
 
+  const emptyDebtForm = () => ({
+    name: '',
+    type: 'loan' as Debt['type'],
+    totalAmount: '',
+    interestRate: '',
+    totalInstallments: '',
+    installmentsPaid: '',
+    nextDueDate: '',
+    creditor: '',
+  });
+
+  const closeForm = () => {
+    setShowAddModal(false);
+    setEditingDebt(null);
+    setDebtForm(emptyDebtForm());
+    setDebtSplits([]);
+  };
+
+  /** Abre o formulário já preenchido: o valor da parcela ou o prazo podem ter mudado */
+  const openEditDebt = (debt: Debt) => {
+    setEditingDebt(debt);
+    setAmountMode('installment');
+    setDebtForm({
+      name: debt.name,
+      type: debt.type,
+      totalAmount: String(debt.monthlyPayment),
+      interestRate: String(debt.interestRate ?? ''),
+      totalInstallments: String(debt.totalInstallments),
+      installmentsPaid: String(debt.installmentsPaid),
+      nextDueDate: debt.nextDueDate,
+      creditor: debt.creditor === 'Não informado' ? '' : debt.creditor,
+    });
+    setShowAddModal(true);
+  };
+
+  const handleSaveDebt = () => {
+    if (!debtFormValid || !editingDebt) return;
+    updateDebt(
+      editingDebt.id,
+      {
+        name: debtForm.name,
+        type: debtForm.type,
+        creditor: debtForm.creditor || 'Não informado',
+        interestRate: parseFloat(debtForm.interestRate) || 0,
+        monthlyPayment: formPlan.monthlyPayment,
+        totalInstallments: formInstallments,
+        installmentsPaid: formPaid,
+        nextDueDate: debtForm.nextDueDate,
+      },
+      debtSplits
+    );
+    closeForm();
+  };
+
   const handleAddDebt = () => {
     if (!debtFormValid) return;
 
@@ -196,9 +253,7 @@ export default function DebtsPage() {
     };
 
     addDebt(newDebt);
-    setDebtSplits([]);
-    setDebtForm({ name: '', type: 'loan', totalAmount: '', interestRate: '', totalInstallments: '', installmentsPaid: '', nextDueDate: '', creditor: '' });
-    setShowAddModal(false);
+    closeForm();
   };
 
   const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -222,7 +277,7 @@ export default function DebtsPage() {
     formAmount > 0 &&
     formInstallments >= 1 &&
     formPaid >= 0 &&
-    formPaid < formInstallments &&
+    (editingDebt ? formPaid <= formInstallments : formPaid < formInstallments) &&
     /^\d{4}-\d{2}-\d{2}$/.test(debtForm.nextDueDate);
 
   const totalDebt = debts.reduce((sum, debt) => sum + debt.remainingAmount, 0);
@@ -274,7 +329,7 @@ export default function DebtsPage() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
-            onClick={() => setShowAddModal(false)}
+            onClick={closeForm}
           >
             <motion.div
               initial={{ scale: 0.95 }}
@@ -284,8 +339,8 @@ export default function DebtsPage() {
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between mb-6">
-                <h3 className="text-xl font-bold">Adicionar Dívida</h3>
-                <Button variant="ghost" size="sm" onClick={() => setShowAddModal(false)} className="h-8 w-8 p-0">
+                <h3 className="text-xl font-bold">{editingDebt ? 'Editar Dívida' : 'Adicionar Dívida'}</h3>
+                <Button variant="ghost" size="sm" onClick={closeForm} className="h-8 w-8 p-0">
                   <X className="w-4 h-4" />
                 </Button>
               </div>
@@ -405,7 +460,9 @@ export default function DebtsPage() {
                 </div>
 
                 <SplitEditor
+                  key={editingDebt?.id ?? 'nova'}
                   total={formPlan.monthlyPayment}
+                  initialSplits={editingDebt ? sharesOf(editingDebt.id).map(s => ({ profile_id: s.profile_id, amount: s.shareAmount })) : undefined}
                   onChange={handleSplitChange}
                   title="Dividir a parcela entre perfis"
                   hint="Cada um paga a sua parte; a parcela só é quitada quando todos pagarem."
@@ -431,11 +488,15 @@ export default function DebtsPage() {
               </div>
 
               <div className="flex gap-2 mt-6">
-                <Button variant="outline" onClick={() => setShowAddModal(false)} className="flex-1">
+                <Button variant="outline" onClick={closeForm} className="flex-1">
                   Cancelar
                 </Button>
-                <Button onClick={handleAddDebt} className="flex-1" disabled={!debtFormValid}>
-                  Adicionar
+                <Button
+                  onClick={editingDebt ? handleSaveDebt : handleAddDebt}
+                  className="flex-1"
+                  disabled={!debtFormValid}
+                >
+                  {editingDebt ? 'Salvar' : 'Adicionar'}
                 </Button>
               </div>
             </motion.div>
@@ -790,12 +851,16 @@ export default function DebtsPage() {
                     >
                       Adiantar Parcelas
                     </Button>
-                    <Button 
-                      variant="default" 
+                    <Button
+                      variant="default"
                       className="w-full bg-green-600 hover:bg-green-700"
                       onClick={() => handlePayOffDebt(debt.id)}
                     >
                       Quitar Totalmente
+                    </Button>
+                    <Button variant="outline" size="sm" className="w-full gap-2" onClick={() => openEditDebt(debt)}>
+                      <Pencil className="w-4 h-4" />
+                      Editar dívida
                     </Button>
                     <Button
                       variant="ghost"

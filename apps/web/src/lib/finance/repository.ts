@@ -394,6 +394,8 @@ export const repo = {
         installment_number: payment.installmentNumber ?? null,
       })
     ),
+  deleteDebtShare: (id: string) =>
+    run('excluir parte da dívida', supabase.from('debt_shares').delete().eq('id', id)),
   upsertDebtShare: (userId: string, share: DebtShare) =>
     run(
       'salvar divisão da dívida',

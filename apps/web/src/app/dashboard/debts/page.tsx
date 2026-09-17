@@ -57,6 +57,8 @@ export default function DebtsPage() {
     totalAmount: '',
     interestRate: '',
     totalInstallments: '',
+    installmentsPaid: '',
+    nextDueDate: '',
     creditor: ''
   });
 
@@ -112,21 +114,16 @@ export default function DebtsPage() {
   };
 
   const handleAddDebt = () => {
-    if (!debtForm.name || !debtForm.totalAmount || !debtForm.totalInstallments) return;
+    if (!debtFormValid) return;
 
+    // O valor total já inclui os juros: a parcela é o total dividido pelas parcelas.
+    // A taxa é só informativa (serve para priorizar a quitação das dívidas mais caras).
     const totalAmount = parseFloat(debtForm.totalAmount);
     const totalInstallments = parseInt(debtForm.totalInstallments);
+    const installmentsPaid = parseInt(debtForm.installmentsPaid) || 0;
     const interestRate = parseFloat(debtForm.interestRate) || 0;
-    
-    // Cálculo do valor mensal com juros (fórmula Price simplificada)
-    const monthlyInterest = interestRate / 100;
-    const monthlyPayment = totalInstallments > 0 
-      ? totalAmount * (monthlyInterest * Math.pow(1 + monthlyInterest, totalInstallments)) / 
-        (Math.pow(1 + monthlyInterest, totalInstallments) - 1)
-      : totalAmount;
-
-    const today = new Date();
-    const nextDueDate = new Date(today.getFullYear(), today.getMonth() + 1, 15);
+    const monthlyPayment = Math.round((totalAmount / totalInstallments) * 100) / 100;
+    const remainingAmount = Math.max(0, Math.round((totalAmount - monthlyPayment * installmentsPaid) * 100) / 100);
 
     const colors = ['from-blue-500 to-blue-700', 'from-purple-500 to-purple-700', 'from-orange-500 to-orange-700', 'from-green-500 to-green-700'];
     const randomColor = colors[Math.floor(Math.random() * colors.length)];
@@ -135,20 +132,31 @@ export default function DebtsPage() {
       name: debtForm.name,
       type: debtForm.type,
       totalAmount,
-      remainingAmount: totalAmount,
-      monthlyPayment: isNaN(monthlyPayment) ? totalAmount / totalInstallments : monthlyPayment,
+      remainingAmount,
+      monthlyPayment,
       interestRate,
-      installmentsPaid: 0,
+      installmentsPaid,
       totalInstallments,
-      nextDueDate: nextDueDate.toISOString().split('T')[0],
+      nextDueDate: debtForm.nextDueDate,
       creditor: debtForm.creditor || 'Não informado',
       color: randomColor
     };
 
     addDebt(newDebt);
-    setDebtForm({ name: '', type: 'loan', totalAmount: '', interestRate: '', totalInstallments: '', creditor: '' });
+    setDebtForm({ name: '', type: 'loan', totalAmount: '', interestRate: '', totalInstallments: '', installmentsPaid: '', nextDueDate: '', creditor: '' });
     setShowAddModal(false);
   };
+
+  const formTotal = parseFloat(debtForm.totalAmount);
+  const formInstallments = parseInt(debtForm.totalInstallments);
+  const formPaid = parseInt(debtForm.installmentsPaid) || 0;
+  const debtFormValid =
+    !!debtForm.name.trim() &&
+    formTotal > 0 &&
+    formInstallments >= 1 &&
+    formPaid >= 0 &&
+    formPaid < formInstallments &&
+    /^\d{4}-\d{2}-\d{2}$/.test(debtForm.nextDueDate);
 
   const totalDebt = debts.reduce((sum, debt) => sum + debt.remainingAmount, 0);
   const totalMonthly = getMonthlyDebtCommitment();
@@ -240,10 +248,11 @@ export default function DebtsPage() {
                 </div>
 
                 <div>
-                  <label className="text-sm font-medium mb-2 block">Valor Total</label>
+                  <label className="text-sm font-medium mb-2 block">Valor total (já com juros)</label>
                   <Input
                     type="number"
-                    placeholder="R$ 15.000,00"
+                    step="0.01"
+                    placeholder="Soma de todas as parcelas"
                     value={debtForm.totalAmount}
                     onChange={(e) => setDebtForm({ ...debtForm, totalAmount: e.target.value })}
                   />
@@ -251,22 +260,46 @@ export default function DebtsPage() {
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="text-sm font-medium mb-2 block">Taxa de Juros (%)</label>
+                    <label className="text-sm font-medium mb-2 block">Total de parcelas</label>
                     <Input
                       type="number"
-                      placeholder="2.5"
-                      value={debtForm.interestRate}
-                      onChange={(e) => setDebtForm({ ...debtForm, interestRate: e.target.value })}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium mb-2 block">Total de Parcelas</label>
-                    <Input
-                      type="number"
+                      min="1"
                       placeholder="24"
                       value={debtForm.totalInstallments}
                       onChange={(e) => setDebtForm({ ...debtForm, totalInstallments: e.target.value })}
                     />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium mb-2 block">Parcelas já pagas</label>
+                    <Input
+                      type="number"
+                      min="0"
+                      placeholder="0"
+                      value={debtForm.installmentsPaid}
+                      onChange={(e) => setDebtForm({ ...debtForm, installmentsPaid: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-medium mb-2 block">Próximo vencimento</label>
+                    <Input
+                      type="date"
+                      value={debtForm.nextDueDate}
+                      onChange={(e) => setDebtForm({ ...debtForm, nextDueDate: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium mb-2 block">Juros ao mês (%)</label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      placeholder="Opcional"
+                      value={debtForm.interestRate}
+                      onChange={(e) => setDebtForm({ ...debtForm, interestRate: e.target.value })}
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">Só para priorizar a quitação</p>
                   </div>
                 </div>
 
@@ -279,12 +312,21 @@ export default function DebtsPage() {
                   />
                 </div>
 
-                {debtForm.totalAmount && debtForm.totalInstallments && (
-                  <div className="p-3 bg-muted rounded-lg">
-                    <p className="text-sm text-muted-foreground mb-1">Parcela Mensal Estimada:</p>
-                    <p className="text-xl font-bold">
-                      {(parseFloat(debtForm.totalAmount) / parseInt(debtForm.totalInstallments)).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                {formTotal > 0 && formInstallments >= 1 && (
+                  <div className="p-3 bg-muted rounded-lg space-y-1 text-sm">
+                    <p>
+                      Parcela: <strong>{(formTotal / formInstallments).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</strong>
+                      {' '}× {formInstallments}
                     </p>
+                    {formPaid > 0 && formPaid < formInstallments && (
+                      <p>
+                        Restam <strong>{formInstallments - formPaid} parcelas</strong>, saldo de{' '}
+                        <strong>{Math.max(0, formTotal - (formTotal / formInstallments) * formPaid).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</strong>
+                      </p>
+                    )}
+                    {formPaid >= formInstallments && (
+                      <p className="text-red-500">As parcelas pagas precisam ser menores que o total.</p>
+                    )}
                   </div>
                 )}
               </div>
@@ -293,7 +335,7 @@ export default function DebtsPage() {
                 <Button variant="outline" onClick={() => setShowAddModal(false)} className="flex-1">
                   Cancelar
                 </Button>
-                <Button onClick={handleAddDebt} className="flex-1">
+                <Button onClick={handleAddDebt} className="flex-1" disabled={!debtFormValid}>
                   Adicionar
                 </Button>
               </div>

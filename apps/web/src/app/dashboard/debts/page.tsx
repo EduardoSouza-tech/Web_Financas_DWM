@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, TrendingDown, DollarSign, Calendar, AlertTriangle, CheckCircle, X, Sparkles, TrendingUp, Trophy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -51,6 +51,24 @@ export default function DebtsPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showPayOffModal, setShowPayOffModal] = useState(false);
   const [debtToPayOff, setDebtToPayOff] = useState<Debt | null>(null);
+  const [amountMode, setAmountMode] = useState<'installment' | 'total'>('installment');
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('debt_amount_mode');
+      if (saved === 'installment' || saved === 'total') setAmountMode(saved);
+    } catch {
+      // storage indisponível: fica o padrão
+    }
+  }, []);
+  const changeAmountMode = (mode: 'installment' | 'total') => {
+    setAmountMode(mode);
+    try {
+      localStorage.setItem('debt_amount_mode', mode);
+    } catch {
+      // storage indisponível
+    }
+  };
+
   const [debtForm, setDebtForm] = useState({
     name: '',
     type: 'loan' as 'loan' | 'financing' | 'credit' | 'other',
@@ -116,14 +134,11 @@ export default function DebtsPage() {
   const handleAddDebt = () => {
     if (!debtFormValid) return;
 
-    // O valor total já inclui os juros: a parcela é o total dividido pelas parcelas.
-    // A taxa é só informativa (serve para priorizar a quitação das dívidas mais caras).
-    const totalAmount = parseFloat(debtForm.totalAmount);
-    const totalInstallments = parseInt(debtForm.totalInstallments);
-    const installmentsPaid = parseInt(debtForm.installmentsPaid) || 0;
+    // Valores já com juros. A taxa é só informativa (serve para priorizar a quitação das dívidas mais caras).
+    const { totalAmount, monthlyPayment, remainingAmount } = formPlan;
+    const totalInstallments = formInstallments;
+    const installmentsPaid = formPaid;
     const interestRate = parseFloat(debtForm.interestRate) || 0;
-    const monthlyPayment = Math.round((totalAmount / totalInstallments) * 100) / 100;
-    const remainingAmount = Math.max(0, Math.round((totalAmount - monthlyPayment * installmentsPaid) * 100) / 100);
 
     const colors = ['from-blue-500 to-blue-700', 'from-purple-500 to-purple-700', 'from-orange-500 to-orange-700', 'from-green-500 to-green-700'];
     const randomColor = colors[Math.floor(Math.random() * colors.length)];
@@ -147,12 +162,23 @@ export default function DebtsPage() {
     setShowAddModal(false);
   };
 
-  const formTotal = parseFloat(debtForm.totalAmount);
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  const formAmount = parseFloat(debtForm.totalAmount);
   const formInstallments = parseInt(debtForm.totalInstallments);
   const formPaid = parseInt(debtForm.installmentsPaid) || 0;
+  // Parcela informada: total = parcela x parcelas (exato).
+  // Total informado: parcela = total / parcelas (centavos arredondados; a última paga o que faltar).
+  const formPlan = (() => {
+    if (!(formAmount > 0) || !(formInstallments >= 1)) return { totalAmount: 0, monthlyPayment: 0, remainingAmount: 0 };
+    const monthlyPayment = amountMode === 'installment' ? round2(formAmount) : round2(formAmount / formInstallments);
+    const totalAmount = amountMode === 'installment' ? round2(monthlyPayment * formInstallments) : round2(formAmount);
+    const remainingAmount = Math.max(0, round2(totalAmount - monthlyPayment * formPaid));
+    return { totalAmount, monthlyPayment, remainingAmount };
+  })();
+  const brl = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   const debtFormValid =
     !!debtForm.name.trim() &&
-    formTotal > 0 &&
+    formAmount > 0 &&
     formInstallments >= 1 &&
     formPaid >= 0 &&
     formPaid < formInstallments &&
@@ -248,11 +274,36 @@ export default function DebtsPage() {
                 </div>
 
                 <div>
-                  <label className="text-sm font-medium mb-2 block">Valor total (já com juros)</label>
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <label className="text-sm font-medium" htmlFor="debt-amount">
+                      {amountMode === 'installment' ? 'Valor da parcela' : 'Valor total (já com juros)'}
+                    </label>
+                    <div className="inline-flex rounded-lg border border-border p-0.5 text-xs" role="radiogroup" aria-label="Como informar o valor">
+                      {([
+                        ['installment', 'Parcela'],
+                        ['total', 'Total'],
+                      ] as const).map(([mode, label]) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          role="radio"
+                          aria-checked={amountMode === mode}
+                          onClick={() => changeAmountMode(mode)}
+                          className={`rounded-md px-3 py-1 font-medium transition ${
+                            amountMode === mode ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   <Input
+                    id="debt-amount"
                     type="number"
                     step="0.01"
-                    placeholder="Soma de todas as parcelas"
+                    min="0"
+                    placeholder={amountMode === 'installment' ? 'Valor de cada parcela, como no contrato' : 'Soma de todas as parcelas'}
                     value={debtForm.totalAmount}
                     onChange={(e) => setDebtForm({ ...debtForm, totalAmount: e.target.value })}
                   />
@@ -312,16 +363,16 @@ export default function DebtsPage() {
                   />
                 </div>
 
-                {formTotal > 0 && formInstallments >= 1 && (
+                {formAmount > 0 && formInstallments >= 1 && (
                   <div className="p-3 bg-muted rounded-lg space-y-1 text-sm">
                     <p>
-                      Parcela: <strong>{(formTotal / formInstallments).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</strong>
-                      {' '}× {formInstallments}
+                      Parcela <strong>{brl(formPlan.monthlyPayment)}</strong> × {formInstallments} = total{' '}
+                      <strong>{brl(formPlan.totalAmount)}</strong>
                     </p>
                     {formPaid > 0 && formPaid < formInstallments && (
                       <p>
                         Restam <strong>{formInstallments - formPaid} parcelas</strong>, saldo de{' '}
-                        <strong>{Math.max(0, formTotal - (formTotal / formInstallments) * formPaid).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</strong>
+                        <strong>{brl(formPlan.remainingAmount)}</strong>
                       </p>
                     )}
                     {formPaid >= formInstallments && (

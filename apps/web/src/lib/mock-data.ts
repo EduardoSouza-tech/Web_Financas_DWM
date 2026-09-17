@@ -201,7 +201,7 @@ export const CREDIT_CARDS = [
     limit: 15000,
     used: 1390.70, // Contas fixas + assinaturas + saúde + lazer + educação
     availableLimit: 13609.30,
-    closingDay: 15,
+    closingDay: 5,
     dueDay: 25,
     lastFourDigits: '4829',
     brand: 'mastercard' as const,
@@ -216,7 +216,7 @@ export const CREDIT_CARDS = [
     limit: 10000,
     used: 1835,
     availableLimit: 8165,
-    closingDay: 10,
+    closingDay: 5,
     dueDay: 20,
     lastFourDigits: '8173',
     brand: 'visa' as const,

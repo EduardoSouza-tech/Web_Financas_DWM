@@ -1,0 +1,187 @@
+import * as pdfjsLib from 'pdfjs-dist';
+
+// Configurar worker do PDF.js
+if (typeof window !== 'undefined') {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+}
+
+export interface ParcelaExtraida {
+  id: string;
+  descricao: string;
+  data: string;
+  valor: number;
+  categoria?: string;
+  status: 'pendente' | 'paga' | 'vencida';
+  estabelecimento?: string;
+  parcela?: string;
+}
+
+export interface DadosFatura {
+  numeroCartao?: string;
+  vencimento?: string;
+  valorTotal?: number;
+  valorMinimo?: number;
+  parcelas: ParcelaExtraida[];
+}
+
+/**
+ * Lê um arquivo PDF e extrai o texto
+ */
+export async function lerPDF(file: File, senha?: string): Promise<string> {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    
+    const loadingTask = pdfjsLib.getDocument({
+      data: arrayBuffer,
+      password: senha,
+    });
+
+    const pdf = await loadingTask.promise;
+    let textoCompleto = '';
+
+    // Extrair texto de todas as páginas
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      const textoPage = textContent.items
+        .map((item: any) => item.str)
+        .join(' ');
+      textoCompleto += textoPage + '\n';
+    }
+
+    return textoCompleto;
+  } catch (error: any) {
+    if (error.name === 'PasswordException') {
+      throw new Error('PDF protegido por senha. Por favor, informe a senha correta.');
+    }
+    throw error;
+  }
+}
+
+/**
+ * Extrai parcelas de fatura de cartão Mastercard
+ */
+export function extrairParcelasMastercard(texto: string): ParcelaExtraida[] {
+  const parcelas: ParcelaExtraida[] = [];
+  const linhas = texto.split('\n');
+
+  // Padrões comuns em faturas Mastercard
+  // Formato: DATA DESCRICAO VALOR
+  // Exemplo: 15/11 MERCADO SAO PAULO 150,00
+  
+  const padraoTransacao = /(\d{2}\/\d{2})\s+(.+?)\s+(\d+[.,]\d{2})/g;
+  const padraoParcelado = /(\d+)\/(\d+)/; // Detectar X/Y parcelas
+
+  let id = 1;
+  
+  for (const linha of linhas) {
+    const matches = [...linha.matchAll(padraoTransacao)];
+    
+    for (const match of matches) {
+      const [_, dataStr, descricao, valorStr] = match;
+      
+      // Limpar e processar
+      const descricaoLimpa = descricao.trim();
+      const valor = parseFloat(valorStr.replace(',', '.'));
+      
+      if (valor > 0 && descricaoLimpa.length > 0) {
+        // Detectar se é parcelado
+        const matchParcela = descricaoLimpa.match(padraoParcelado);
+        const infoParcela = matchParcela ? `${matchParcela[1]}/${matchParcela[2]}` : undefined;
+        
+        // Tentar detectar categoria baseado em palavras-chave
+        const categoria = detectarCategoria(descricaoLimpa);
+        
+        // Construir data completa (assumindo ano atual)
+        const [dia, mes] = dataStr.split('/');
+        const ano = new Date().getFullYear();
+        const data = `${ano}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`;
+        
+        parcelas.push({
+          id: String(id++),
+          descricao: descricaoLimpa,
+          data,
+          valor,
+          categoria,
+          status: new Date(data) < new Date() ? 'paga' : 'pendente',
+          parcela: infoParcela,
+        });
+      }
+    }
+  }
+
+  return parcelas;
+}
+
+/**
+ * Detecta categoria baseado em palavras-chave na descrição
+ */
+function detectarCategoria(descricao: string): string {
+  const desc = descricao.toLowerCase();
+  
+  const categorias: Record<string, string[]> = {
+    'Alimentação': ['mercado', 'supermercado', 'restaurante', 'padaria', 'lanchonete', 'ifood', 'uber eats'],
+    'Transporte': ['posto', 'combustivel', 'uber', '99', 'estacionamento', 'pedagio'],
+    'Saúde': ['farmacia', 'drogaria', 'clinica', 'hospital', 'laboratorio', 'academia'],
+    'Entretenimento': ['netflix', 'spotify', 'cinema', 'teatro', 'streaming', 'youtube', 'prime'],
+    'Vestuário': ['loja', 'roupa', 'calcado', 'tenis', 'moda'],
+    'Educação': ['livraria', 'curso', 'escola', 'faculdade', 'universidade'],
+    'Serviços': ['telefone', 'internet', 'luz', 'agua', 'gas', 'condominio'],
+    'Compras': ['magazine', 'americanas', 'mercado livre', 'amazon', 'shopee'],
+  };
+
+  for (const [categoria, palavras] of Object.entries(categorias)) {
+    if (palavras.some(p => desc.includes(p))) {
+      return categoria;
+    }
+  }
+
+  return 'Outros';
+}
+
+/**
+ * Extrai informações gerais da fatura
+ */
+export function extrairInfoFatura(texto: string): Partial<DadosFatura> {
+  const info: Partial<DadosFatura> = {};
+
+  // Tentar extrair número do cartão (últimos 4 dígitos)
+  const matchCartao = texto.match(/\d{4}\s*\*+\s*\d{4}/);
+  if (matchCartao) {
+    info.numeroCartao = matchCartao[0];
+  }
+
+  // Tentar extrair vencimento
+  const matchVencimento = texto.match(/vencimento[:\s]+(\d{2}\/\d{2}\/\d{4})/i);
+  if (matchVencimento) {
+    info.vencimento = matchVencimento[1];
+  }
+
+  // Tentar extrair valor total
+  const matchTotal = texto.match(/total[:\s]+R?\$?\s*(\d+[.,]\d{2})/i);
+  if (matchTotal) {
+    info.valorTotal = parseFloat(matchTotal[1].replace(',', '.'));
+  }
+
+  // Tentar extrair valor mínimo
+  const matchMinimo = texto.match(/m[ií]nimo[:\s]+R?\$?\s*(\d+[.,]\d{2})/i);
+  if (matchMinimo) {
+    info.valorMinimo = parseFloat(matchMinimo[1].replace(',', '.'));
+  }
+
+  return info;
+}
+
+/**
+ * Processa fatura completa
+ */
+export async function processarFatura(file: File, senha?: string): Promise<DadosFatura> {
+  const texto = await lerPDF(file, senha);
+  const parcelas = extrairParcelasMastercard(texto);
+  const info = extrairInfoFatura(texto);
+
+  return {
+    ...info,
+    parcelas,
+  };
+}

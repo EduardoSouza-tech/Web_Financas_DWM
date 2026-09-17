@@ -1,0 +1,721 @@
+'use client';
+
+import { useState } from 'react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  FileText,
+  Upload,
+  Download,
+  Trash2,
+  CheckCircle2,
+  AlertCircle,
+  FileSpreadsheet,
+  Search,
+  Filter,
+  Lock,
+  Eye,
+  EyeOff,
+  Users,
+  UserPlus,
+  UserMinus,
+  BarChart3,
+} from 'lucide-react';
+import * as XLSX from 'xlsx';
+
+interface Parcela {
+  id: string;
+  descricao: string;
+  data: string;
+  valor: number;
+  categoria?: string;
+  status: 'pendente' | 'paga' | 'vencida';
+  estabelecimento?: string;
+  parcela?: string;
+  usuario?: string;
+}
+
+interface DadosFatura {
+  numeroCartao?: string;
+  vencimento?: string;
+  valorTotal?: number;
+  valorMinimo?: number;
+  parcelas: Parcela[];
+}
+
+export default function ConciliacaoPage() {
+  const [arquivo, setArquivo] = useState<File | null>(null);
+  const [parcelas, setParcelas] = useState<Parcela[]>([]);
+  const [processando, setProcessando] = useState(false);
+  const [filtro, setFiltro] = useState<string>('todas');
+  const [busca, setBusca] = useState('');
+  const [senha, setSenha] = useState('');
+  const [mostrarSenha, setMostrarSenha] = useState(false);
+  const [precisaSenha, setPrecisaSenha] = useState(false);
+  const [dadosFatura, setDadosFatura] = useState<Partial<DadosFatura>>({});
+  const [erro, setErro] = useState<string>('');
+  const [usuarios, setUsuarios] = useState<string[]>(['']);
+  const [novoUsuario, setNovoUsuario] = useState('');
+  const [filtroUsuario, setFiltroUsuario] = useState<string>('todos');
+  const [mostrarGerenciarUsuarios, setMostrarGerenciarUsuarios] = useState(false);
+
+  // Processar PDF via API
+  const processarPDF = async (file: File, senhaInput?: string) => {
+    console.log('🚀 Iniciando processamento...', { 
+      arquivo: file.name, 
+      tamanho: file.size, 
+      senha: senhaInput || senha ? '***' : 'não fornecida' 
+    });
+    
+    setProcessando(true);
+    setErro('');
+    
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      if (senhaInput || senha) {
+        formData.append('senha', senhaInput || senha);
+      }
+
+      console.log('📤 Enviando requisição...');
+
+      const response = await fetch('/api/processar-pdf', {
+        method: 'POST',
+        body: formData,
+      });
+
+      console.log('📥 Resposta recebida:', response.status);
+
+      if (!response.ok) {
+        const error = await response.json();
+        console.error('❌ Erro na resposta:', error);
+        if (response.status === 401) {
+          setPrecisaSenha(true);
+          setErro('PDF protegido por senha');
+        } else {
+          throw new Error(error.error || 'Erro ao processar PDF');
+        }
+        return;
+      }
+
+      const resultado: DadosFatura = await response.json();
+      console.log('✅ Resultado:', { parcelas: resultado.parcelas.length });
+      
+      setParcelas(resultado.parcelas);
+      setDadosFatura(resultado);
+      setPrecisaSenha(false);
+      
+    } catch (error: any) {
+      setErro(error.message || 'Erro ao processar PDF');
+      console.error('💥 Erro ao processar PDF:', error);
+    } finally {
+      setProcessando(false);
+      console.log('🏁 Processamento finalizado');
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && file.type === 'application/pdf') {
+      setArquivo(file);
+      setParcelas([]);
+      setSenha('');
+      setErro('');
+      // Solicitar senha antes de processar
+      setPrecisaSenha(true);
+    } else {
+      setErro('Por favor, selecione um arquivo PDF válido');
+    }
+  };
+
+  const handleProcessarComSenha = () => {
+    if (arquivo && senha) {
+      processarPDF(arquivo, senha);
+    }
+  };
+
+  const exportarExcel = () => {
+    if (parcelas.length === 0) return;
+
+    // Preparar dados para exportação
+    const dadosExportacao = parcelas.map(p => ({
+      'Descrição': p.descricao,
+      'Data': new Date(p.data).toLocaleDateString('pt-BR'),
+      'Valor': `R$ ${p.valor.toFixed(2).replace('.', ',')}`,
+      'Categoria': p.categoria || '-',
+      'Usuário': p.usuario || '-',
+      'Status': p.status.charAt(0).toUpperCase() + p.status.slice(1),
+    }));
+
+    // Criar workbook
+    const ws = XLSX.utils.json_to_sheet(dadosExportacao);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Parcelas');
+
+    // Ajustar largura das colunas
+    const colWidths = [
+      { wch: 40 }, // Descrição
+      { wch: 12 }, // Data
+      { wch: 15 }, // Valor
+      { wch: 20 }, // Categoria
+      { wch: 20 }, // Usuário
+      { wch: 12 }, // Status
+    ];
+    ws['!cols'] = colWidths;
+
+    // Download
+    XLSX.writeFile(wb, `fatura_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
+  const removerParcela = (id: string) => {
+    setParcelas(parcelas.filter(p => p.id !== id));
+  };
+
+  const alternarStatus = (id: string) => {
+    setParcelas(parcelas.map(p => 
+      p.id === id 
+        ? { ...p, status: p.status === 'paga' ? 'pendente' : 'paga' as 'paga' | 'pendente' }
+        : p
+    ));
+  };
+
+  const adicionarUsuario = () => {
+    if (novoUsuario.trim() && !usuarios.includes(novoUsuario.trim())) {
+      setUsuarios([...usuarios, novoUsuario.trim()]);
+      setNovoUsuario('');
+    }
+  };
+
+  const removerUsuario = (usuario: string) => {
+    setUsuarios(usuarios.filter(u => u !== usuario));
+    // Remove tags deste usuário das parcelas
+    setParcelas(parcelas.map(p => 
+      p.usuario === usuario ? { ...p, usuario: undefined } : p
+    ));
+  };
+
+  const atribuirUsuario = (parcelaId: string, usuario: string) => {
+    setParcelas(parcelas.map(p => 
+      p.id === parcelaId ? { ...p, usuario: usuario || undefined } : p
+    ));
+  };
+
+  const parcelasFiltradas = parcelas.filter(p => {
+    const matchBusca = p.descricao.toLowerCase().includes(busca.toLowerCase()) ||
+                      p.categoria?.toLowerCase().includes(busca.toLowerCase());
+    const matchFiltro = filtro === 'todas' || p.status === filtro;
+    const matchUsuario = filtroUsuario === 'todos' || 
+                        (filtroUsuario === 'sem-usuario' && !p.usuario) ||
+                        p.usuario === filtroUsuario;
+    return matchBusca && matchFiltro && matchUsuario;
+  });
+
+  const totalGeral = parcelas.reduce((acc, p) => acc + p.valor, 0);
+  const totalPagas = parcelas.filter(p => p.status === 'paga').reduce((acc, p) => acc + p.valor, 0);
+  const totalPendentes = parcelas.filter(p => p.status === 'pendente').reduce((acc, p) => acc + p.valor, 0);
+
+  // Calcular totais por usuário
+  const totaisPorUsuario = usuarios
+    .filter(u => u)
+    .map(usuario => ({
+      nome: usuario,
+      total: parcelas.filter(p => p.usuario === usuario).reduce((acc, p) => acc + p.valor, 0),
+      quantidade: parcelas.filter(p => p.usuario === usuario).length
+    }))
+    .filter(u => u.quantidade > 0);
+
+  const totalSemUsuario = parcelas.filter(p => !p.usuario).reduce((acc, p) => acc + p.valor, 0);
+  const quantidadeSemUsuario = parcelas.filter(p => !p.usuario).length;
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
+          <FileText className="h-8 w-8" />
+          Conciliação de Faturas
+        </h1>
+        <p className="text-muted-foreground mt-2">
+          Importe faturas em PDF e converta para planilhas Excel
+        </p>
+      </div>
+
+      {/* Info da Fatura */}
+      {dadosFatura.numeroCartao && (
+        <Card className="border-primary/20 bg-primary/5">
+          <CardContent className="pt-6">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {dadosFatura.numeroCartao && (
+                <div>
+                  <p className="text-xs text-muted-foreground">Cartão</p>
+                  <p className="font-mono font-medium">{dadosFatura.numeroCartao}</p>
+                </div>
+              )}
+              {dadosFatura.vencimento && (
+                <div>
+                  <p className="text-xs text-muted-foreground">Vencimento</p>
+                  <p className="font-medium">{dadosFatura.vencimento}</p>
+                </div>
+              )}
+              {dadosFatura.valorTotal && (
+                <div>
+                  <p className="text-xs text-muted-foreground">Total Fatura</p>
+                  <p className="font-bold text-lg">R$ {dadosFatura.valorTotal.toFixed(2).replace('.', ',')}</p>
+                </div>
+              )}
+              {dadosFatura.valorMinimo && (
+                <div>
+                  <p className="text-xs text-muted-foreground">Pagamento Mínimo</p>
+                  <p className="font-medium">R$ {dadosFatura.valorMinimo.toFixed(2).replace('.', ',')}</p>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Cards de Resumo */}
+      <div className="grid gap-4 md:grid-cols-3">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Geral</CardTitle>
+            <FileText className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              R$ {totalGeral.toFixed(2).replace('.', ',')}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {parcelas.length} parcelas extraídas
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Pagas</CardTitle>
+            <CheckCircle2 className="h-4 w-4 text-green-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-green-600">
+              R$ {totalPagas.toFixed(2).replace('.', ',')}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {parcelas.filter(p => p.status === 'paga').length} parcelas
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Pendentes</CardTitle>
+            <AlertCircle className="h-4 w-4 text-amber-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-amber-600">
+              R$ {totalPendentes.toFixed(2).replace('.', ',')}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {parcelas.filter(p => p.status === 'pendente').length} parcelas
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Gerenciamento de Usuários e Relatório */}
+      {parcelas.length > 0 && (
+        <div className="grid gap-6 md:grid-cols-2">
+          {/* Gerenciar Usuários */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Users className="h-5 w-5" />
+                Usuários do Cartão
+              </CardTitle>
+              <CardDescription>
+                Adicione os usuários do cartão para rastrear gastos individuais
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Adicionar usuário */}
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Nome do usuário"
+                  value={novoUsuario}
+                  onChange={(e) => setNovoUsuario(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && adicionarUsuario()}
+                />
+                <Button onClick={adicionarUsuario} size="icon" disabled={!novoUsuario.trim()}>
+                  <UserPlus className="h-4 w-4" />
+                </Button>
+              </div>
+
+              {/* Lista de usuários */}
+              <div className="space-y-2">
+                {usuarios.filter(u => u).map((usuario) => (
+                  <div
+                    key={usuario}
+                    className="flex items-center justify-between p-3 bg-muted rounded-lg"
+                  >
+                    <span className="font-medium">{usuario}</span>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => removerUsuario(usuario)}
+                      className="h-8 w-8 text-destructive hover:text-destructive"
+                    >
+                      <UserMinus className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+                {usuarios.filter(u => u).length === 0 && (
+                  <p className="text-sm text-muted-foreground text-center py-4">
+                    Nenhum usuário cadastrado
+                  </p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Relatório por Usuário */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <BarChart3 className="h-5 w-5" />
+                Gastos por Usuário
+              </CardTitle>
+              <CardDescription>
+                Total gasto por cada usuário do cartão
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {totaisPorUsuario.map((item) => (
+                <div
+                  key={item.nome}
+                  className="flex items-center justify-between p-3 bg-muted rounded-lg"
+                >
+                  <div>
+                    <p className="font-medium">{item.nome}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {item.quantidade} transaç{item.quantidade === 1 ? 'ão' : 'ões'}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-bold text-lg">
+                      R$ {item.total.toFixed(2).replace('.', ',')}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {((item.total / totalGeral) * 100).toFixed(1)}% do total
+                    </p>
+                  </div>
+                </div>
+              ))}
+              
+              {quantidadeSemUsuario > 0 && (
+                <div className="flex items-center justify-between p-3 bg-amber-50 dark:bg-amber-950/20 rounded-lg border border-amber-200 dark:border-amber-900">
+                  <div>
+                    <p className="font-medium text-amber-900 dark:text-amber-100">Sem usuário</p>
+                    <p className="text-xs text-amber-700 dark:text-amber-300">
+                      {quantidadeSemUsuario} transaç{quantidadeSemUsuario === 1 ? 'ão' : 'ões'}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-bold text-lg text-amber-900 dark:text-amber-100">
+                      R$ {totalSemUsuario.toFixed(2).replace('.', ',')}
+                    </p>
+                    <p className="text-xs text-amber-700 dark:text-amber-300">
+                      {((totalSemUsuario / totalGeral) * 100).toFixed(1)}% do total
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {totaisPorUsuario.length === 0 && quantidadeSemUsuario === 0 && (
+                <p className="text-sm text-muted-foreground text-center py-4">
+                  Nenhum gasto registrado
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Upload e Ações */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Importar Fatura</CardTitle>
+          <CardDescription>
+            Envie um arquivo PDF da sua fatura para extrair as parcelas automaticamente
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center gap-4">
+            <label className="flex-1">
+              <input
+                type="file"
+                accept="application/pdf"
+                onChange={handleFileChange}
+                className="hidden"
+                id="file-upload"
+              />
+              <Button
+                asChild
+                variant="outline"
+                className="w-full cursor-pointer"
+              >
+                <label htmlFor="file-upload" className="cursor-pointer flex items-center justify-center gap-2">
+                  <Upload className="w-4 h-4" />
+                  {arquivo ? arquivo.name : 'Selecionar PDF'}
+                </label>
+              </Button>
+            </label>
+
+            {parcelas.length > 0 && (
+              <Button
+                onClick={exportarExcel}
+                className="gap-2"
+              >
+                <FileSpreadsheet className="w-4 h-4" />
+                Exportar Excel
+              </Button>
+            )}
+          </div>
+
+          {/* Campo de Senha */}
+          {precisaSenha && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              className="space-y-2"
+            >
+              <div className="flex items-center gap-2 text-sm text-amber-600">
+                <Lock className="w-4 h-4" />
+                PDF protegido por senha
+              </div>
+              <div className="flex gap-2">
+                <div className="flex-1 relative">
+                  <Input
+                    type={mostrarSenha ? 'text' : 'password'}
+                    placeholder="Digite a senha do PDF"
+                    value={senha}
+                    onChange={(e) => setSenha(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && handleProcessarComSenha()}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setMostrarSenha(!mostrarSenha)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    {mostrarSenha ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                <Button onClick={handleProcessarComSenha} disabled={!senha}>
+                  Processar
+                </Button>
+              </div>
+            </motion.div>
+          )}
+
+          {/* Erro */}
+          {erro && !precisaSenha && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="flex items-center gap-2 text-sm text-destructive"
+            >
+              <AlertCircle className="w-4 h-4" />
+              {erro}
+            </motion.div>
+          )}
+
+          {processando && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="flex items-center gap-2 text-sm text-muted-foreground"
+            >
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+              Processando PDF e extraindo parcelas...
+            </motion.div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Filtros e Busca */}
+      {parcelas.length > 0 && (
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col sm:flex-row gap-4">
+                <div className="flex-1 relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <input
+                    type="text"
+                    placeholder="Buscar por descrição ou categoria..."
+                    value={busca}
+                    onChange={(e) => setBusca(e.target.value)}
+                    className="w-full pl-9 pr-4 py-2 border rounded-md bg-background"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant={filtro === 'todas' ? 'default' : 'outline'}
+                    onClick={() => setFiltro('todas')}
+                    size="sm"
+                  >
+                    Todas
+                  </Button>
+                  <Button
+                    variant={filtro === 'paga' ? 'default' : 'outline'}
+                    onClick={() => setFiltro('paga')}
+                    size="sm"
+                  >
+                    Pagas
+                  </Button>
+                  <Button
+                    variant={filtro === 'pendente' ? 'default' : 'outline'}
+                    onClick={() => setFiltro('pendente')}
+                    size="sm"
+                  >
+                  Pendentes
+                </Button>
+              </div>
+            </div>
+            
+            {/* Filtro por Usuário */}
+            {usuarios.filter(u => u).length > 0 && (
+              <div className="flex items-center gap-2">
+                <Filter className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm text-muted-foreground">Usuário:</span>
+                <select
+                  value={filtroUsuario}
+                  onChange={(e) => setFiltroUsuario(e.target.value)}
+                  className="px-3 py-1.5 border rounded-md bg-background text-sm"
+                >
+                  <option value="todos">Todos</option>
+                  <option value="sem-usuario">Sem usuário</option>
+                  {usuarios.filter(u => u).map(usuario => (
+                    <option key={usuario} value={usuario}>{usuario}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Lista de Parcelas */}
+      {parcelas.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Parcelas Extraídas</CardTitle>
+            <CardDescription>
+              {parcelasFiltradas.length} de {parcelas.length} parcelas
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              <AnimatePresence>
+                {parcelasFiltradas.map((parcela) => (
+                  <motion.div
+                    key={parcela.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, x: -100 }}
+                    className="flex items-center gap-4 p-4 border rounded-lg hover:bg-accent/50 transition"
+                  >
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="font-medium">{parcela.descricao}</h3>
+                        <Badge variant={parcela.status === 'paga' ? 'default' : 'secondary'}>
+                          {parcela.status === 'paga' ? 'Paga' : 'Pendente'}
+                        </Badge>
+                        {parcela.categoria && (
+                          <Badge variant="outline">{parcela.categoria}</Badge>
+                        )}
+                        {parcela.parcela && (
+                          <Badge variant="secondary" className="text-xs">
+                            {parcela.parcela}
+                          </Badge>
+                        )}
+                        {parcela.usuario && (
+                          <Badge variant="default" className="bg-blue-500 text-xs">
+                            👤 {parcela.usuario}
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 mt-1">
+                        <p className="text-sm text-muted-foreground">
+                          {new Date(parcela.data).toLocaleDateString('pt-BR')}
+                        </p>
+                        {usuarios.filter(u => u).length > 0 && (
+                          <select
+                            value={parcela.usuario || ''}
+                            onChange={(e) => atribuirUsuario(parcela.id, e.target.value)}
+                            className="text-xs px-2 py-1 border rounded bg-background"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <option value="">Atribuir usuário...</option>
+                            {usuarios.filter(u => u).map(usuario => (
+                              <option key={usuario} value={usuario}>{usuario}</option>
+                            ))}
+                          </select>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-lg font-bold">
+                        R$ {parcela.valor.toFixed(2).replace('.', ',')}
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => alternarStatus(parcela.id)}
+                        title="Marcar como paga/pendente"
+                      >
+                        <CheckCircle2 className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => removerParcela(parcela.id)}
+                        title="Remover parcela"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Estado Vazio */}
+      {parcelas.length === 0 && !processando && (
+        <Card>
+          <CardContent className="py-12">
+            <div className="text-center space-y-4">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-muted">
+                <FileText className="w-8 h-8 text-muted-foreground" />
+              </div>
+              <div>
+                <h3 className="font-medium">Nenhuma fatura importada</h3>
+                <p className="text-sm text-muted-foreground">
+                  Envie um arquivo PDF para começar
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}

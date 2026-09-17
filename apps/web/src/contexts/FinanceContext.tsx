@@ -7,6 +7,16 @@ import { useDebts, type Debt as DbDebt } from '@/hooks/useDebts';
 import { useAuth } from '@/providers/auth-provider';
 import { useProfiles } from '@/providers/profile-provider';
 import { isSupabaseConfigured } from '@/lib/supabase';
+import {
+  DEFAULT_CLOSING_DAY,
+  addMonths,
+  currentMonthKey,
+  expandInstallments,
+  invoiceMonthOf,
+  monthOfDate,
+  type Installment,
+  type MonthKey,
+} from '@/lib/finance/credit-card';
 
 interface Category {
   id: string;
@@ -16,7 +26,50 @@ interface Category {
   type: 'income' | 'expense';
 }
 
+export type PaymentMethod = 'cash' | 'credit_card';
+
+export interface Transaction {
+  id: string;
+  profile_id?: string;
+  date: string; // YYYY-MM-DD
+  description: string;
+  category: string;
+  type: 'income' | 'expense';
+  amount: number; // no cartão: valor TOTAL da compra
+  paymentMethod?: PaymentMethod;
+  cardId?: string;
+  installments?: number;
+  firstInstallment?: number;
+  firstInvoiceMonth?: MonthKey;
+  tags?: string[];
+}
+
+export interface InvoiceState {
+  checked: string[]; // chaves das parcelas conferidas
+  statementAmount?: number; // valor informado pelo banco
+  paidAt?: string;
+}
+
+export const invoiceKey = (profileId: string | undefined, cardId: string, month: MonthKey) =>
+  `${profileId ?? ''}|${cardId}|${month}`;
+
+export const isCardTransaction = (tx: Pick<Transaction, 'type' | 'paymentMethod' | 'cardId'>) =>
+  tx.type === 'expense' && (tx.paymentMethod === 'credit_card' || (!tx.paymentMethod && !!tx.cardId));
+
 interface FinanceContextType {
+  /** Mês usado em todas as análises (receitas, despesas, saldo) */
+  referenceMonth: MonthKey;
+  setReferenceMonth: (month: MonthKey) => void;
+  addTransaction: (tx: Omit<Transaction, 'id' | 'profile_id'>) => void;
+  deleteTransaction: (id: string) => void;
+  /** Todas as parcelas de cartão visíveis no perfil ativo (todas as faturas) */
+  installments: Installment[];
+  getInstallmentsForInvoice: (month: MonthKey, cardId?: string) => Installment[];
+  getInvoice: (profileId: string | undefined, cardId: string, month: MonthKey) => InvoiceState;
+  toggleInstallmentChecked: (inst: Installment) => void;
+  setInvoiceStatementAmount: (profileId: string | undefined, cardId: string, month: MonthKey, amount?: number) => void;
+  setInvoicePaid: (profileId: string | undefined, cardId: string, month: MonthKey, paid: boolean) => void;
+  getTotalIncome: () => number;
   cards: any[];
   setCards: (cards: any[]) => void;
   transactions: any[];
@@ -78,7 +131,23 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     const tag = (items: any[]) => items.map(item => ({ ...item, profile_id: firstProfileId }));
     setAllCards(tag(CREDIT_CARDS));
     if (!remote) {
-      setAllTransactions(tag(CURRENT_MONTH_TRANSACTIONS));
+      // Dados de exemplo trazidos para o mês atual, mantendo o dia original
+      const month = currentMonthKey();
+      const closingOf = new Map<string, number>(CREDIT_CARDS.map(c => [c.id, c.closingDay]));
+      setAllTransactions(
+        tag(CURRENT_MONTH_TRANSACTIONS).map((tx: any) => {
+          const date = `${month}-${tx.date.slice(8, 10)}`;
+          if (!tx.cardId) return { ...tx, date, paymentMethod: 'cash' };
+          return {
+            ...tx,
+            date,
+            paymentMethod: 'credit_card',
+            installments: 1,
+            firstInstallment: 1,
+            firstInvoiceMonth: invoiceMonthOf(date, closingOf.get(tx.cardId) ?? DEFAULT_CLOSING_DAY),
+          };
+        })
+      );
       setAllDebts(tag(DEBTS));
     }
   }, [firstProfileId, remote]);
@@ -107,20 +176,95 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     [inView, isFamilyView, firstProfileId, activeProfileId]
   );
 
+  const [referenceMonth, setReferenceMonth] = useState<MonthKey>(() => currentMonthKey());
+  const [invoices, setInvoices] = useState<Record<string, InvoiceState>>({});
+
   const transactions = useMemo(() => allTransactions.filter(inView), [allTransactions, inView]);
   const debts = useMemo(() => allDebts.filter(inView), [allDebts, inView]);
 
-  // Uso do cartão calculado a partir das transações do mesmo perfil
-  const cards = useMemo(
-    () =>
-      allCards.filter(inView).map(card => {
-        const used = allTransactions
-          .filter(tx => tx.cardId === card.id && tx.profile_id === card.profile_id)
-          .reduce((sum, tx) => sum + tx.amount, 0);
-        return { ...card, used, nextInvoice: used, availableLimit: card.limit - used };
-      }),
-    [allCards, allTransactions, inView]
+  const closingDays = useMemo(
+    () => new Map<string, number>(allCards.map(c => [`${c.profile_id}|${c.id}`, c.closingDay ?? DEFAULT_CLOSING_DAY])),
+    [allCards]
   );
+
+  const installments = useMemo(
+    () =>
+      (transactions as Transaction[])
+        .filter(tx => isCardTransaction(tx) && tx.cardId)
+        .flatMap(tx =>
+          expandInstallments(
+            { ...tx, cardId: tx.cardId! },
+            closingDays.get(`${tx.profile_id}|${tx.cardId}`) ?? DEFAULT_CLOSING_DAY
+          )
+        ),
+    [transactions, closingDays]
+  );
+
+  const getInvoice = useCallback(
+    (profileId: string | undefined, cardId: string, month: MonthKey): InvoiceState =>
+      invoices[invoiceKey(profileId, cardId, month)] ?? { checked: [] },
+    [invoices]
+  );
+
+  const updateInvoice = (
+    profileId: string | undefined,
+    cardId: string,
+    month: MonthKey,
+    patch: (inv: InvoiceState) => InvoiceState
+  ) => {
+    const key = invoiceKey(profileId, cardId, month);
+    setInvoices(prev => ({ ...prev, [key]: patch(prev[key] ?? { checked: [] }) }));
+  };
+
+  const toggleInstallmentChecked = (inst: Installment) =>
+    updateInvoice(inst.profile_id, inst.cardId, inst.invoiceMonth, inv => ({
+      ...inv,
+      checked: inv.checked.includes(inst.key) ? inv.checked.filter(k => k !== inst.key) : [...inv.checked, inst.key],
+    }));
+
+  const setInvoiceStatementAmount = (profileId: string | undefined, cardId: string, month: MonthKey, amount?: number) =>
+    updateInvoice(profileId, cardId, month, inv => ({ ...inv, statementAmount: amount }));
+
+  // Pagar a fatura libera o limite. A despesa já conta no mês da fatura (parcela a parcela),
+  // por isso o pagamento não gera uma nova despesa.
+  const setInvoicePaid = (profileId: string | undefined, cardId: string, month: MonthKey, paid: boolean) =>
+    updateInvoice(profileId, cardId, month, inv => ({ ...inv, paidAt: paid ? new Date().toISOString() : undefined }));
+
+  const getInstallmentsForInvoice = (month: MonthKey, cardId?: string) =>
+    installments.filter(i => i.invoiceMonth === month && (!cardId || i.cardId === cardId));
+
+  // Cartão: limite usado = parcelas de faturas não pagas (inclui futuras); próxima fatura = fatura aberta hoje
+  const cards = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    return allCards.filter(inView).map(card => {
+      const closingDay = card.closingDay ?? DEFAULT_CLOSING_DAY;
+      const own = installments.filter(i => i.cardId === card.id && i.profile_id === card.profile_id);
+      const unpaid = own.filter(i => !invoices[invoiceKey(i.profile_id, i.cardId, i.invoiceMonth)]?.paidAt);
+      const used = unpaid.reduce((sum, i) => sum + i.amount, 0);
+      const openMonth = invoiceMonthOf(today, closingDay);
+      const nextInvoice = own.filter(i => i.invoiceMonth === openMonth).reduce((sum, i) => sum + i.amount, 0);
+      const dueDay = card.dueDay ?? 15;
+      const dueMonth = dueDay > closingDay ? openMonth : addMonths(openMonth, 1);
+      return {
+        ...card,
+        used,
+        availableLimit: card.limit - used,
+        nextInvoice,
+        openInvoiceMonth: openMonth,
+        nextDueDate: `${dueMonth}-${String(dueDay).padStart(2, '0')}`,
+        installments: new Set(unpaid.filter(i => i.total > 1).map(i => i.purchaseId)).size,
+      };
+    });
+  }, [allCards, installments, invoices, inView]);
+
+  const addTransaction = (tx: Omit<Transaction, 'id' | 'profile_id'>) => {
+    const profileId = isFamilyView ? firstProfileId : activeProfileId;
+    setAllTransactions(prev => [{ ...tx, id: `tx-${Date.now()}`, profile_id: profileId }, ...prev]);
+  };
+
+  const deleteTransaction = (id: string) => {
+    setAllTransactions(prev => prev.filter(tx => tx.id !== id));
+  };
 
   const setTransactions = useMemo(() => scopedSetter(setAllTransactions), [scopedSetter]);
   const setDebts = useMemo(() => scopedSetter(setAllDebts), [scopedSetter]);
@@ -167,17 +311,21 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     return cards.reduce((sum, card) => sum + card.used, 0);
   };
 
+  // Despesas do mês de referência: à vista pela data; cartão pela parcela da fatura do mês.
+  // Não depende do cartão existir: excluir um cartão não tira despesas das análises.
   const getTotalExpenses = () => {
-    const cardExpenses = getTotalCardUsage();
     const cashExpenses = transactions
-      .filter(tx => tx.type === 'expense' && !tx.cardId)
+      .filter(tx => tx.type === 'expense' && !isCardTransaction(tx) && monthOfDate(tx.date) === referenceMonth)
       .reduce((sum, tx) => sum + tx.amount, 0);
-    return cardExpenses + cashExpenses;
+    const cardExpenses = installments
+      .filter(i => i.invoiceMonth === referenceMonth)
+      .reduce((sum, i) => sum + i.amount, 0);
+    return cashExpenses + cardExpenses;
   };
 
   const getTotalIncome = () => {
     return transactions
-      .filter(tx => tx.type === 'income')
+      .filter(tx => tx.type === 'income' && monthOfDate(tx.date) === referenceMonth)
       .reduce((sum, tx) => sum + tx.amount, 0);
   };
 
@@ -205,6 +353,17 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   };
 
   const value = {
+    referenceMonth,
+    setReferenceMonth,
+    addTransaction,
+    deleteTransaction,
+    installments,
+    getInstallmentsForInvoice,
+    getInvoice,
+    toggleInstallmentChecked,
+    setInvoiceStatementAmount,
+    setInvoicePaid,
+    getTotalIncome,
     cards,
     setCards,
     transactions,

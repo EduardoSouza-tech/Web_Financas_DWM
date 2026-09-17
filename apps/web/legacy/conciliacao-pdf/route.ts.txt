@@ -1,0 +1,104 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+
+const execPromise = promisify(exec);
+
+export const dynamic = 'force-dynamic';
+
+export async function POST(request: NextRequest) {
+  let tempFilePath: string | null = null;
+  
+  try {
+    const formData = await request.formData();
+    const file = formData.get('file') as File;
+    const senha = formData.get('senha') as string;
+
+    console.log('📄 Arquivo recebido:', file?.name);
+    console.log('🔑 Senha recebida:', senha ? '***' : 'não fornecida');
+
+    if (!file) {
+      return NextResponse.json({ error: 'Arquivo não fornecido' }, { status: 400 });
+    }
+
+    // Salvar arquivo temporário
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const tempDir = os.tmpdir();
+    tempFilePath = path.join(tempDir, `pdf-${Date.now()}.pdf`);
+    fs.writeFileSync(tempFilePath, buffer);
+    console.log('💾 Arquivo salvo em:', tempFilePath);
+
+    // Caminho do script Python e do Python
+    const scriptPath = path.join(process.cwd(), 'scripts', 'process-pdf.py');
+    const pythonPath = path.join(process.cwd(), '..', '..', '.venv', 'Scripts', 'python.exe');
+
+    console.log('🐍 Python:', pythonPath);
+    console.log('📜 Script:', scriptPath);
+    console.log('📂 CWD:', process.cwd());
+
+    // Verificar se arquivos existem
+    if (!fs.existsSync(pythonPath)) {
+      return NextResponse.json({ 
+        error: 'Python não encontrado',
+        detalhes: `Caminho: ${pythonPath}`
+      }, { status: 500 });
+    }
+
+    if (!fs.existsSync(scriptPath)) {
+      return NextResponse.json({ 
+        error: 'Script Python não encontrado',
+        detalhes: `Caminho: ${scriptPath}`
+      }, { status: 500 });
+    }
+
+    // Executar script Python
+    const command = senha
+      ? `"${pythonPath}" "${scriptPath}" "${tempFilePath}" "${senha}"`
+      : `"${pythonPath}" "${scriptPath}" "${tempFilePath}"`;
+
+    console.log('⚙️ Executando:', command);
+
+    const { stdout, stderr } = await execPromise(command);
+
+    console.log('📤 Stdout:', stdout);
+    if (stderr) {
+      console.log('⚠️ Stderr:', stderr);
+    }
+
+    if (stderr && !stderr.includes('DeprecationWarning')) {
+      console.error('Erro Python:', stderr);
+    }
+
+    const resultado = JSON.parse(stdout);
+
+    // Verificar se houve erro
+    if (resultado.error) {
+      const status = resultado.status || 500;
+      console.error('❌ Erro do Python:', resultado.error);
+      return NextResponse.json({ error: resultado.error }, { status });
+    }
+
+    console.log('✅ Processamento OK, parcelas:', resultado.parcelas?.length || 0);
+    return NextResponse.json(resultado);
+
+  } catch (error: any) {
+    console.error('💥 Erro no processamento:', error);
+    console.error('Stack:', error.stack);
+    return NextResponse.json({ 
+      error: 'Erro ao processar requisição',
+      detalhes: error.message 
+    }, { status: 500 });
+  } finally {
+    // Limpar arquivo temporário
+    if (tempFilePath && fs.existsSync(tempFilePath)) {
+      try {
+        fs.unlinkSync(tempFilePath);
+      } catch (e) {
+        console.error('Erro ao remover arquivo temporário:', e);
+      }
+    }
+  }
+}

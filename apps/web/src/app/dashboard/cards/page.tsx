@@ -9,10 +9,10 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Input } from '@/components/ui/input';
 import { useFinance } from '@/contexts/FinanceContext';
-import { CURRENT_MONTH_TRANSACTIONS } from '@/lib/mock-data';
+import { formatMonth } from '@/lib/finance/credit-card';
 
 export default function CardsPage() {
-  const { cards, setCards } = useFinance();
+  const { cards, setCards, getInstallmentsForInvoice } = useFinance();
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
@@ -43,7 +43,7 @@ export default function CardsPage() {
     if (!cardForm.name || !cardForm.limit) return;
 
     const today = new Date();
-    const closingDay = parseInt(cardForm.closingDay) || 10;
+    const closingDay = parseInt(cardForm.closingDay) || 5;
     const dueDay = parseInt(cardForm.dueDay) || 15;
     const limit = parseFloat(cardForm.limit);
 
@@ -119,8 +119,16 @@ export default function CardsPage() {
     }
   };
 
+  // Parcelas da fatura aberta hoje (a que ainda vai fechar)
   const getCardTransactions = (cardId: string) => {
-    return CURRENT_MONTH_TRANSACTIONS.filter(tx => (tx as any).cardId === cardId);
+    const card = cards.find(c => c.id === cardId);
+    if (!card) return [];
+    return getInstallmentsForInvoice(card.openInvoiceMonth, cardId).map(i => ({
+      id: i.key,
+      description: i.total > 1 ? `${i.description} (${i.number}/${i.total})` : i.description,
+      date: i.purchaseDate,
+      amount: i.amount,
+    }));
   };
 
   return (
@@ -337,7 +345,7 @@ export default function CardsPage() {
               <div className="mb-6 p-4 bg-muted rounded-lg">
                 <div className="flex justify-between items-center">
                   <div>
-                    <p className="text-sm text-muted-foreground">Valor da Fatura</p>
+                    <p className="text-sm text-muted-foreground">Fatura de {formatMonth(selectedCard.openInvoiceMonth)}</p>
                     <p className="text-2xl font-bold">
                       {selectedCard.nextInvoice.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                     </p>
@@ -361,7 +369,7 @@ export default function CardsPage() {
                       <div key={tx.id} className="flex justify-between items-center p-3 bg-muted rounded-lg">
                         <div>
                           <p className="font-medium">{tx.description}</p>
-                          <p className="text-sm text-muted-foreground">{new Date(tx.date).toLocaleDateString('pt-BR')}</p>
+                          <p className="text-sm text-muted-foreground">{tx.date.split('-').reverse().join('/')}</p>
                         </div>
                         <p className="font-semibold">
                           {tx.amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}

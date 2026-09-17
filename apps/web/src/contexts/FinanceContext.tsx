@@ -156,8 +156,6 @@ interface FinanceContextType {
   debts: any[];
   /** Partes de cada perfil nas dívidas divididas */
   debtShares: DebtShare[];
-  /** Regrava a divisão de uma dívida */
-  saveDebtShares: (debtId: string, splits: { profile_id: string; amount: number }[]) => void;
   /** Um perfil paga a parte dele na parcela atual */
   payDebtShare: (debtId: string, profileId: string, date?: string) => void;
   /** Quem deve a quem: saldos e transferências que zeram a conta */
@@ -549,10 +547,9 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const addTransaction = (tx: Omit<Transaction, 'id' | 'profile_id'>) => {
     const record = { ...tx, id: newId('tx'), profile_id: targetProfileId };
     setAllTransactions(prev => [record, ...prev]);
-    persist('upsertTransaction', user!.id, record);
-    if (record.splits && record.splits.length > 0) {
-      persist('saveTransactionSplits', user!.id, record.id, record.profile_id, record.splits);
-    }
+    // Com divisão, a transação e as partes vão numa operação só: as partes dependem da linha existir
+    if (record.splits && record.splits.length > 0) persist('upsertTransactionWithSplits', user!.id, record);
+    else persist('upsertTransaction', user!.id, record);
   };
 
   const deleteTransaction = (id: string) => {
@@ -583,29 +580,6 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     const done = debt.installmentsPaid >= debt.totalInstallments || debt.remainingAmount <= 0.005;
     if (!done) return debt;
     return { ...debt, status: 'paid', paidAt: new Date().toISOString(), remainingAmount: 0, installmentsPaid: debt.totalInstallments };
-  };
-
-  /** Regrava a divisão de uma dívida (cada perfil paga a sua parte de cada parcela) */
-  const saveDebtShares = (debtId: string, splits: { profile_id: string; amount: number }[]) => {
-    const kept = debtShares.filter(s => s.debtId !== debtId);
-    if (splits.length === 0) {
-      setDebtShares(kept);
-      persist('deleteDebtShares', debtId);
-      return;
-    }
-    const existing = new Map(debtShares.filter(s => s.debtId === debtId).map(s => [s.profile_id, s]));
-    const next: DebtShare[] = splits.map(split => {
-      const current = existing.get(split.profile_id);
-      return {
-        id: current?.id ?? newId('share'),
-        debtId,
-        profile_id: split.profile_id,
-        shareAmount: split.amount,
-        installmentsPaid: current?.installmentsPaid ?? 0,
-      };
-    });
-    setDebtShares([...kept, ...next]);
-    next.forEach(share => persist('upsertDebtShare', user!.id, share));
   };
 
   /** A parcela atual da dívida já foi paga por todos? */
@@ -654,8 +628,23 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const addDebt = (debt: any) => {
     const { splits, ...rest } = debt ?? {};
     const id = newId();
-    saveDebt({ ...rest, id, profile_id: targetProfileId, status: 'active' });
-    if (splits?.length) saveDebtShares(id, splits);
+    const record = { ...rest, id, profile_id: targetProfileId, status: 'active' };
+    setAllDebts(prev => [...prev, record]);
+
+    if (!splits?.length) {
+      persist('upsertDebt', user!.id, record);
+      return;
+    }
+    // A dívida e as partes vão juntas: as partes dependem da linha da dívida existir
+    const shares: DebtShare[] = splits.map((split: { profile_id: string; amount: number }) => ({
+      id: newId('share'),
+      debtId: id,
+      profile_id: split.profile_id,
+      shareAmount: split.amount,
+      installmentsPaid: 0,
+    }));
+    setDebtShares(prev => [...prev, ...shares]);
+    persist('upsertDebtWithShares', user!.id, record, shares);
   };
 
   // Excluir = lançamento errado: some a dívida, os pagamentos (cascata no banco) e a conquista dela.
@@ -1132,7 +1121,6 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     setInvoicePaid,
     debts,
     debtShares,
-    saveDebtShares,
     payDebtShare,
     getSettlement,
     paidDebts,

@@ -345,6 +345,14 @@ export async function loadAll(): Promise<RemoteData> {
 export const repo = {
   upsertTransaction: (userId: string, t: TransactionRecord) =>
     run('salvar transação', supabase.from('transactions').upsert(fromTransaction(userId, t))),
+  /**
+   * Salva a transação e a divisão dela em sequência.
+   * As partes referenciam a transação, então a linha precisa existir antes.
+   */
+  upsertTransactionWithSplits: async (userId: string, t: TransactionRecord) => {
+    await run('salvar transação', supabase.from('transactions').upsert(fromTransaction(userId, t)));
+    return repo.saveTransactionSplits(userId, t.id, t.profile_id, t.splits ?? []);
+  },
   updateTransactionsCategory: (from: string, to: string) =>
     run('renomear categoria nas transações', supabase.from('transactions').update({ category: to }).eq('category', from)),
   deleteTransaction: (id: string) => run('excluir transação', supabase.from('transactions').delete().eq('id', id)),
@@ -361,6 +369,15 @@ export const repo = {
   },
 
   upsertDebt: (userId: string, d: any) => run('salvar dívida', supabase.from('debts').upsert(fromDebt(userId, d))),
+  /**
+   * Salva a dívida e a divisão dela em sequência.
+   * As partes referenciam a dívida, então a linha precisa existir antes.
+   */
+  upsertDebtWithShares: async (userId: string, d: any, shares: DebtShare[]) => {
+    await run('salvar dívida', supabase.from('debts').upsert(fromDebt(userId, d)));
+    for (const share of shares) await repo.upsertDebtShare(userId, share);
+    return null;
+  },
   deleteDebt: (id: string) => run('excluir dívida', supabase.from('debts').delete().eq('id', id)),
   insertDebtPayment: (userId: string, payment: DebtPayment) =>
     run(
@@ -393,8 +410,6 @@ export const repo = {
         { onConflict: 'debt_id,profile_id' }
       )
     ),
-  deleteDebtShares: (debtId: string) =>
-    run('excluir divisão da dívida', supabase.from('debt_shares').delete().eq('debt_id', debtId)),
 
   upsertCard: (userId: string, c: any) => run('salvar cartão', supabase.from('cards').upsert(fromCard(userId, c))),
   deleteCard: (id: string) => run('excluir cartão', supabase.from('cards').delete().eq('id', id)),
